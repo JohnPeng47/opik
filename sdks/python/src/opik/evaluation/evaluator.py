@@ -2,6 +2,8 @@ import logging
 import time
 from typing import Any, Callable, Dict, List, Optional, Union
 
+from pydantic import BaseModel
+
 from .. import Prompt
 from ..api_objects import opik_client
 from ..api_objects.dataset import dataset
@@ -220,7 +222,9 @@ def evaluate_experiment(
 
 
 def _build_prompt_evaluation_task(
-    model: base_model.OpikBaseModel, messages: List[Dict[str, Any]]
+    model: base_model.OpikBaseModel,
+    messages: List[Dict[str, Any]],
+    eval_fn: Optional[Callable[[Any, Any], Dict[str, Any]]] = None,
 ) -> Callable[[Dict[str, Any]], Dict[str, Any]]:
     def _prompt_evaluation_task(prompt_variables: Dict[str, Any]) -> Dict[str, Any]:
         processed_messages = []
@@ -238,10 +242,22 @@ def _build_prompt_evaluation_task(
 
         llm_output = model.generate_provider_response(messages=processed_messages)
 
-        return {
-            "input": processed_messages,
-            "output": llm_output.choices[0].message.content,
-        }
+        if eval_fn:
+            expected_output = prompt_variables.get("expected_output")
+            return eval_fn(llm_output, expected_output)
+        else:
+            output_content: Any
+            if hasattr(llm_output, "choices") and llm_output.choices:
+                output_content = llm_output.choices[0].message.content
+            elif isinstance(llm_output, BaseModel):
+                output_content = llm_output.model_dump()
+            else:
+                output_content = str(llm_output)
+
+            return {
+                "input": processed_messages,
+                "output": output_content,
+            }
 
     return _prompt_evaluation_task
 
@@ -259,6 +275,7 @@ def evaluate_prompt(
     task_threads: int = 16,
     prompt: Optional[Prompt] = None,
     dataset_item_ids: Optional[List[str]] = None,
+    eval_fn: Optional[Callable[[Any, Any], Dict[str, Any]]] = None,
 ) -> evaluation_result.EvaluationResult:
     """
     Performs prompt evaluation on a given dataset.
@@ -288,71 +305,37 @@ def evaluate_prompt(
         prompt: Prompt object to link with experiment.
 
         dataset_item_ids: list of dataset item ids to evaluate. If not provided, all samples in the dataset will be evaluated.
+
+        eval_fn: An optional callable function that takes the raw model output and the expected output
+                 from the dataset item and returns a dictionary representing the evaluation result.
+                 If provided, this function replaces the default processing and evaluation logic.
+                 The signature should be `eval_fn(output: Any, expected: Any) -> Dict[str, Any]`.
+                 The returned dictionary will be used as input for scoring metrics.
+
+    Returns:
+        EvaluationResult: An object containing the evaluation results and experiment details.
     """
+    if not model:
+        model = models_factory.default_model()
+
     if isinstance(model, str):
-        model = models_factory.get(model_name=model)
-    elif not isinstance(model, base_model.OpikBaseModel):
-        raise ValueError("`model` must be either a string or an OpikBaseModel instance")
+        model = models_factory.model_from_registry(name=model)
 
-    if experiment_config is None:
-        experiment_config = {"prompt_template": messages, "model": model.model_name}
-    else:
-        if "prompt_template" not in experiment_config:
-            experiment_config["prompt_template"] = messages
+    prompt_evaluation_task = _build_prompt_evaluation_task(
+        model=model, messages=messages, eval_fn=eval_fn
+    )
 
-        if "model" not in experiment_config:
-            experiment_config["model"] = model.model_name
-
-    if scoring_metrics is None:
-        scoring_metrics = []
-
-    client = opik_client.get_client_cached()
-
-    prompts = [prompt] if prompt else None
-
-    experiment = client.create_experiment(
-        name=experiment_name,
-        dataset_name=dataset.name,
+    return evaluate(
+        dataset=dataset,
+        task=prompt_evaluation_task,
+        scoring_metrics=scoring_metrics,
+        experiment_name=experiment_name,
+        project_name=project_name,
         experiment_config=experiment_config,
-        prompts=prompts,
+        verbose=verbose,
+        nb_samples=nb_samples,
+        task_threads=task_threads,
+        prompt=prompt,
+        dataset_item_ids=dataset_item_ids,
     )
 
-    start_time = time.time()
-
-    with asyncio_support.async_http_connections_expire_immediately():
-        evaluation_engine = engine.EvaluationEngine(
-            client=client,
-            project_name=project_name,
-            experiment_=experiment,
-            scoring_metrics=scoring_metrics,
-            workers=task_threads,
-            verbose=verbose,
-            scoring_key_mapping=None,
-        )
-        test_results = evaluation_engine.evaluate_llm_tasks(
-            dataset_=dataset,
-            task=_build_prompt_evaluation_task(model=model, messages=messages),
-            nb_samples=nb_samples,
-            dataset_item_ids=dataset_item_ids,
-        )
-
-    total_time = time.time() - start_time
-
-    if verbose == 1:
-        report.display_experiment_results(dataset.name, total_time, test_results)
-
-    report.display_experiment_link(
-        experiment_id=experiment.id,
-        dataset_id=dataset.id,
-        url_override=client.config.url_override,
-    )
-
-    client.flush()
-
-    evaluation_result_ = evaluation_result.EvaluationResult(
-        experiment_id=experiment.id,
-        experiment_name=experiment.name,
-        test_results=test_results,
-    )
-
-    return evaluation_result_
