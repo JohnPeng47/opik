@@ -5,6 +5,7 @@
 import * as serializers from "../index";
 import * as OpikApi from "../../api/index";
 import * as core from "../../core";
+import { JsonListStringPublic } from "./JsonListStringPublic";
 import { JsonNodePublic } from "./JsonNodePublic";
 import { ErrorInfoPublic } from "./ErrorInfoPublic";
 import { FeedbackScorePublic } from "./FeedbackScorePublic";
@@ -15,11 +16,11 @@ export const TracePublic: core.serialization.ObjectSchema<serializers.TracePubli
     core.serialization.object({
         id: core.serialization.string().optional(),
         projectId: core.serialization.property("project_id", core.serialization.string().optional()),
-        name: core.serialization.string(),
+        name: core.serialization.string().optional(),
         startTime: core.serialization.property("start_time", core.serialization.date()),
         endTime: core.serialization.property("end_time", core.serialization.date().optional()),
-        input: JsonNodePublic.optional(),
-        output: JsonNodePublic.optional(),
+        input: JsonListStringPublic.optional(),
+        output: JsonListStringPublic.optional(),
         metadata: JsonNodePublic.optional(),
         tags: core.serialization.list(core.serialization.string()).optional(),
         errorInfo: core.serialization.property("error_info", ErrorInfoPublic.optional()),
@@ -47,11 +48,11 @@ export declare namespace TracePublic {
     export interface Raw {
         id?: string | null;
         project_id?: string | null;
-        name: string;
+        name?: string | null;
         start_time: string;
         end_time?: string | null;
-        input?: JsonNodePublic.Raw | null;
-        output?: JsonNodePublic.Raw | null;
+        input?: JsonListStringPublic.Raw | null;
+        output?: JsonListStringPublic.Raw | null;
         metadata?: JsonNodePublic.Raw | null;
         tags?: string[] | null;
         error_info?: ErrorInfoPublic.Raw | null;

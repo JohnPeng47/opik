@@ -9,13 +9,16 @@ import {
 } from "@/components/ui/accordion";
 import SyntaxHighlighter from "@/components/shared/SyntaxHighlighter/SyntaxHighlighter";
 import AttachmentsList from "./AttachmentsList";
+import { Spinner } from "@/components/ui/spinner";
 
 type InputOutputTabProps = {
   data: Trace | Span;
+  isLoading: boolean;
 };
 
 const InputOutputTab: React.FunctionComponent<InputOutputTabProps> = ({
   data,
+  isLoading,
 }) => {
   const { images, formattedData } = useMemo(
     () => processInputData(data.input),
@@ -28,25 +31,39 @@ const InputOutputTab: React.FunctionComponent<InputOutputTabProps> = ({
       className="w-full"
       defaultValue={["attachments", "input", "output"]}
     >
-      <AttachmentsList data={data} images={images} enabled={false} />
-      <AccordionItem value="input">
+      <AttachmentsList data={data} images={images} />
+      <AccordionItem className="group" value="input" disabled={isLoading}>
         <AccordionTrigger>Input</AccordionTrigger>
-        <AccordionContent>
-          <SyntaxHighlighter
-            data={formattedData as object}
-            prettifyConfig={{ fieldType: "input" }}
-            preserveKey="syntax-highlighter-trace-sidebar-input"
-          />
+        <AccordionContent
+          forceMount
+          className="group-data-[state=closed]:hidden"
+        >
+          {isLoading ? (
+            <Spinner size="small" />
+          ) : (
+            <SyntaxHighlighter
+              data={formattedData as object}
+              prettifyConfig={{ fieldType: "input" }}
+              preserveKey="syntax-highlighter-trace-sidebar-input"
+            />
+          )}
         </AccordionContent>
       </AccordionItem>
-      <AccordionItem value="output">
+      <AccordionItem className="group" value="output" disabled={isLoading}>
         <AccordionTrigger>Output</AccordionTrigger>
-        <AccordionContent>
-          <SyntaxHighlighter
-            data={data.output}
-            prettifyConfig={{ fieldType: "output" }}
-            preserveKey="syntax-highlighter-trace-sidebar-output"
-          />
+        <AccordionContent
+          forceMount
+          className="group-data-[state=closed]:hidden"
+        >
+          {isLoading ? (
+            <Spinner size="small" />
+          ) : (
+            <SyntaxHighlighter
+              data={data.output}
+              prettifyConfig={{ fieldType: "output" }}
+              preserveKey="syntax-highlighter-trace-sidebar-output"
+            />
+          )}
         </AccordionContent>
       </AccordionItem>
     </Accordion>

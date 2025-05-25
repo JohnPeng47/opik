@@ -8,10 +8,8 @@ import com.comet.opik.api.SpanBatch;
 import com.comet.opik.api.SpanSearchCriteria;
 import com.comet.opik.api.SpanUpdate;
 import com.comet.opik.api.SpansCountResponse;
-import com.comet.opik.api.error.EntityAlreadyExistsException;
 import com.comet.opik.api.error.ErrorMessage;
 import com.comet.opik.api.error.IdentifierMismatchException;
-import com.comet.opik.api.sorting.SpanSortingFactory;
 import com.comet.opik.domain.attachment.AttachmentService;
 import com.comet.opik.infrastructure.auth.RequestContext;
 import com.comet.opik.infrastructure.lock.LockService;
@@ -21,11 +19,9 @@ import com.google.common.base.Preconditions;
 import io.opentelemetry.instrumentation.annotations.WithSpan;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
-import jakarta.ws.rs.NotFoundException;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.StringUtils;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -33,7 +29,6 @@ import reactor.core.scheduler.Schedulers;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
-import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
@@ -61,31 +56,20 @@ public class SpanService {
     private final @NonNull LockService lockService;
     private final @NonNull CommentService commentService;
     private final @NonNull AttachmentService attachmentService;
-    private final @NonNull SpanSortingFactory sortingFactory;
 
     @WithSpan
     public Mono<Span.SpanPage> find(int page, int size, @NonNull SpanSearchCriteria searchCriteria) {
         log.info("Finding span by '{}'", searchCriteria);
+        searchCriteria = findProjectAndVerifyVisibility(searchCriteria);
 
-        if (searchCriteria.projectId() != null) {
-            return spanDAO.find(page, size, searchCriteria);
-        }
-
-        return findProject(searchCriteria)
-                .flatMap(project -> project.stream().findFirst().map(Mono::just).orElseGet(Mono::empty))
-                .flatMap(project -> spanDAO.find(
-                        page, size, searchCriteria.toBuilder().projectId(project.id()).build()))
-                .switchIfEmpty(Mono.just(Span.SpanPage.empty(page, sortingFactory.getSortableFields())));
+        return spanDAO.find(page, size, searchCriteria);
     }
 
-    private Mono<List<Project>> findProject(SpanSearchCriteria searchCriteria) {
-        return Mono.deferContextual(ctx -> {
-            String workspaceId = ctx.get(RequestContext.WORKSPACE_ID);
-
-            return Mono
-                    .fromCallable(() -> projectService.findByNames(workspaceId, List.of(searchCriteria.projectName())))
-                    .subscribeOn(Schedulers.boundedElastic());
-        });
+    private SpanSearchCriteria findProjectAndVerifyVisibility(SpanSearchCriteria searchCriteria) {
+        return searchCriteria.toBuilder()
+                .projectId(projectService.resolveProjectIdAndVerifyVisibility(searchCriteria.projectId(),
+                        searchCriteria.projectName()))
+                .build();
     }
 
     @WithSpan
@@ -107,17 +91,10 @@ public class SpanService {
         var projectName = WorkspaceUtils.getProjectName(span.projectName());
         return IdGenerator
                 .validateVersionAsync(id, SPAN_KEY)
-                .then(getOrCreateProject(projectName))
+                .then(projectService.getOrCreate(projectName))
                 .flatMap(project -> lockService.executeWithLock(
                         new LockService.Lock(id, SPAN_KEY),
                         Mono.defer(() -> insertSpan(span, project, id))));
-    }
-
-    private Mono<Project> getOrCreateProject(String projectName) {
-        return makeMonoContextAware((userName, workspaceId) -> Mono
-                .fromCallable(() -> projectService.getOrCreate(workspaceId, projectName, userName))
-                .onErrorResume(e -> handleProjectCreationError(e, projectName, workspaceId))
-                .subscribeOn(Schedulers.boundedElastic()));
     }
 
     private Mono<UUID> insertSpan(Span span, Project project, UUID id) {
@@ -130,8 +107,7 @@ public class SpanService {
     private Mono<UUID> insertSpan(Span span, Project project, UUID id, Span partialExistingSpan) {
         return Mono.defer(() -> {
             // Check if a partial span exists caused by a patch request, if so, proceed to insert.
-            if (StringUtils.isBlank(partialExistingSpan.name())
-                    && Instant.EPOCH.equals(partialExistingSpan.startTime())
+            if (Instant.EPOCH.equals(partialExistingSpan.startTime())
                     && partialExistingSpan.type() == null) {
                 return create(span, project, id);
             }
@@ -147,19 +123,6 @@ public class SpanService {
         return spanDAO.insert(span).thenReturn(span.id());
     }
 
-    private Mono<Project> handleProjectCreationError(Throwable exception, String projectName, String workspaceId) {
-        return switch (exception) {
-            case EntityAlreadyExistsException __ -> findProjectByName(projectName, workspaceId);
-            default -> Mono.error(exception);
-        };
-    }
-
-    private Mono<Project> findProjectByName(String projectName, String workspaceId) {
-        return Mono.fromCallable(() -> projectService.findByNames(workspaceId, List.of(projectName))
-                .stream().findFirst().orElseThrow())
-                .subscribeOn(Schedulers.boundedElastic());
-    }
-
     @WithSpan
     public Mono<Void> update(@NonNull UUID id, @NonNull SpanUpdate spanUpdate) {
         log.info("Updating span with id '{}'", id);
@@ -169,7 +132,7 @@ public class SpanService {
         return IdGenerator
                 .validateVersionAsync(id, SPAN_KEY)
                 .then(Mono.defer(() -> getProjectById(spanUpdate)
-                        .switchIfEmpty(Mono.defer(() -> getOrCreateProject(projectName)))
+                        .switchIfEmpty(Mono.defer(() -> projectService.getOrCreate(projectName)))
                         .subscribeOn(Schedulers.boundedElastic()))
                         //TODO: refactor to implement proper conflict resolution
                         .flatMap(project -> lockService.executeWithLock(
@@ -261,7 +224,7 @@ public class SpanService {
         log.info("Creating batch of spans for projects '{}'", projectNames);
 
         Mono<List<Span>> resolveProjects = Flux.fromIterable(projectNames)
-                .flatMap(this::getOrCreateProject)
+                .flatMap(projectService::getOrCreate)
                 .collectList()
                 .map(projects -> bindSpanToProjectAndId(batch, projects));
 
@@ -298,33 +261,16 @@ public class SpanService {
     }
 
     public Mono<ProjectStats> getStats(@NonNull SpanSearchCriteria criteria) {
-        if (criteria.projectId() != null) {
-            return spanDAO.getStats(criteria)
-                    .switchIfEmpty(Mono.just(ProjectStats.empty()));
-        }
-
-        return makeMonoContextAware(
-                (userName, workspaceId) -> findProjectByName(criteria.projectName(), workspaceId).onErrorResume(
-                        e -> switch (e) {
-                            case NoSuchElementException __ -> Mono.error(new NotFoundException("Project not found"));
-                            default -> Mono.error(e);
-                        }))
-                .flatMap(project -> spanDAO.getStats(criteria.toBuilder().projectId(project.id()).build()))
+        criteria = findProjectAndVerifyVisibility(criteria);
+        return spanDAO.getStats(criteria)
                 .switchIfEmpty(Mono.just(ProjectStats.empty()));
     }
 
     @WithSpan
     public Flux<Span> search(int limit, @NonNull SpanSearchCriteria criteria) {
+        criteria = findProjectAndVerifyVisibility(criteria);
 
-        if (criteria.projectId() != null) {
-            return spanDAO.search(limit, criteria);
-        }
-
-        return findProject(criteria)
-                .flatMap(project -> project.stream().findFirst().map(Mono::just).orElseGet(Mono::empty))
-                .map(project -> criteria.toBuilder().projectId(project.id()).build())
-                .flatMapMany(newCriteria -> spanDAO.search(limit, newCriteria))
-                .switchIfEmpty(Flux.empty());
+        return spanDAO.search(limit, criteria);
     }
 
     public Mono<Void> deleteByTraceIds(Set<UUID> traceIds) {

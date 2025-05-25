@@ -129,6 +129,11 @@ class OpikConfig(pydantic_settings.BaseSettings):
     The amount of background threads that submit data to the backend.
     """
 
+    file_upload_background_workers: int = 16
+    """
+    The amount of background threads that upload files to the backend.
+    """
+
     console_logging_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = (
         "INFO"
     )
@@ -171,7 +176,7 @@ class OpikConfig(pydantic_settings.BaseSettings):
     If set to True, Opik will send the information about the errors to Sentry.
     """
 
-    sentry_dsn: str = "https://18e4b84006b2ad4cb5df85f372b94dd0@o168229.ingest.us.sentry.io/4508620148441088"
+    sentry_dsn: str = "https://ceea3c150b0c2968e5913e9e9e919d5b@o168229.ingest.us.sentry.io/4508620148441088"  # 14.05.2025
     """
     Sentry project DSN which is used as a destination for sentry events.
     In case there is a need to update reporting rules and stop receiving events from existing users,
@@ -184,6 +189,25 @@ class OpikConfig(pydantic_settings.BaseSettings):
     If set to True - Opik will create llm spans for LiteLLMChatModel calls.
     It is mainly to be used in tests since litellm uses external Opik callback
     which makes HTTP requests not via the opik package.
+    """
+
+    enable_json_request_compression: bool = True
+    """
+    If set to True - Opik will compress the JSON request body.
+    """
+
+    guardrail_timeout: int = 30
+    """
+    Timeout for guardrail.validate calls in seconds. If response takes more than this, it will be considered failed and raises an Exception.
+    """
+
+    maximal_queue_size: int = 10000
+    """
+    Specifies the maximum number of messages that can be queued for delivery when a connection error occurs or rate limiting is in effect.
+    """
+    maximal_queue_size_batch_factor: int = 10
+    """
+    Defines the factor applied to the `maximal_queue_size` to reduce the maximal message queue size when batching is enabled.
     """
 
     @property
@@ -210,6 +234,10 @@ class OpikConfig(pydantic_settings.BaseSettings):
     @property
     def is_localhost_installation(self) -> bool:
         return "localhost" in self.url_override
+
+    @property
+    def guardrails_backend_host(self) -> str:
+        return url_helpers.get_base_url(self.url_override) + "guardrails/"
 
     @pydantic.model_validator(mode="after")
     def _set_url_override_from_api_key(self) -> "OpikConfig":

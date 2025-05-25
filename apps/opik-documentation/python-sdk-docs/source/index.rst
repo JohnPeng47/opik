@@ -193,6 +193,15 @@ You can learn more about the `opik` python SDK in the following sections:
    library/Prompt
 
 .. toctree::
+   :caption: Guardrails
+   :maxdepth: 1
+   
+   guardrails/guardrail
+   guardrails/topic
+   guardrails/pii
+   guardrails/validation_response
+
+.. toctree::
    :caption: Testing
    :maxdepth: 1
    
@@ -208,6 +217,7 @@ You can learn more about the `opik` python SDK in the following sections:
    Objects/Span.rst
    Objects/SpanData.rst
    Objects/SpanPublic.rst
+   Objects/Attachment.rst
    Objects/FeedbackScoreDict.rst
    Objects/Experiment.rst
    Objects/ExperimentItemContent.rst

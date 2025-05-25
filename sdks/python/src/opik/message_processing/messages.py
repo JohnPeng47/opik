@@ -1,15 +1,24 @@
 import dataclasses
 import datetime
-from typing import Optional, Any, Dict, List, Union
-from ..types import SpanType, ErrorInfoDict, LLMProvider
+from dataclasses import field
+from typing import Optional, Any, Dict, List, Union, Literal
+
+from . import arguments_utils
+from ..rest_api.types import span_write, trace_write
+from ..types import SpanType, ErrorInfoDict, LLMProvider, AttachmentEntityType
 
 
 @dataclasses.dataclass
 class BaseMessage:
+    delivery_time: float = field(init=False, default=0.0)
+
     def as_payload_dict(self) -> Dict[str, Any]:
         # we are not using dataclasses.as_dict() here
-        # because it will try to deepcopy all object and will fail if there is non-serializable object
-        return {**self.__dict__}
+        # because it will try to deepcopy all objects and will fail if there is a non-serializable object
+        data = {**self.__dict__}
+        if "delivery_time" in data:
+            data.pop("delivery_time")
+        return data
 
 
 @dataclasses.dataclass
@@ -25,6 +34,12 @@ class CreateTraceMessage(BaseMessage):
     tags: Optional[List[str]]
     error_info: Optional[ErrorInfoDict]
     thread_id: Optional[str]
+
+    def __post_init__(self) -> None:
+        if self.input is not None:
+            self.input = arguments_utils.recursive_shallow_copy(self.input)
+        if self.output is not None:
+            self.output = arguments_utils.recursive_shallow_copy(self.output)
 
     def as_payload_dict(self) -> Dict[str, Any]:
         data = super().as_payload_dict()
@@ -47,6 +62,12 @@ class UpdateTraceMessage(BaseMessage):
     tags: Optional[List[str]]
     error_info: Optional[ErrorInfoDict]
     thread_id: Optional[str]
+
+    def __post_init__(self) -> None:
+        if self.input is not None:
+            self.input = arguments_utils.recursive_shallow_copy(self.input)
+        if self.output is not None:
+            self.output = arguments_utils.recursive_shallow_copy(self.output)
 
     def as_payload_dict(self) -> Dict[str, Any]:
         data = super().as_payload_dict()
@@ -74,6 +95,12 @@ class CreateSpanMessage(BaseMessage):
     error_info: Optional[ErrorInfoDict]
     total_cost: Optional[float]
 
+    def __post_init__(self) -> None:
+        if self.input is not None:
+            self.input = arguments_utils.recursive_shallow_copy(self.input)
+        if self.output is not None:
+            self.output = arguments_utils.recursive_shallow_copy(self.output)
+
     def as_payload_dict(self) -> Dict[str, Any]:
         data = super().as_payload_dict()
         data["id"] = data.pop("span_id")
@@ -100,6 +127,12 @@ class UpdateSpanMessage(BaseMessage):
     error_info: Optional[ErrorInfoDict]
     total_cost: Optional[float]
 
+    def __post_init__(self) -> None:
+        if self.input is not None:
+            self.input = arguments_utils.recursive_shallow_copy(self.input)
+        if self.output is not None:
+            self.output = arguments_utils.recursive_shallow_copy(self.output)
+
     def as_payload_dict(self) -> Dict[str, Any]:
         data = super().as_payload_dict()
         data["id"] = data.pop("span_id")
@@ -110,7 +143,7 @@ class UpdateSpanMessage(BaseMessage):
 @dataclasses.dataclass
 class FeedbackScoreMessage(BaseMessage):
     """
-    There is no handler for that in message processor, it exists
+    There is no handler for that in the message processor, it exists
     only as an item of BatchMessage
     """
 
@@ -146,9 +179,47 @@ class AddSpanFeedbackScoresBatchMessage(AddFeedbackScoresBatchMessage):
 
 @dataclasses.dataclass
 class CreateSpansBatchMessage(BaseMessage):
-    batch: List[CreateSpanMessage]
+    batch: List[span_write.SpanWrite]
 
 
 @dataclasses.dataclass
 class CreateTraceBatchMessage(BaseMessage):
-    batch: List[CreateTraceMessage]
+    batch: List[trace_write.TraceWrite]
+
+
+@dataclasses.dataclass
+class GuardrailBatchItemMessage(BaseMessage):
+    """
+    There is no handler for that in the message processor, it exists
+    only as an item of BatchMessage
+    """
+
+    project_name: Optional[str]
+    entity_id: str
+    secondary_id: str
+    name: str
+    result: Union[Literal["passed", "failed"], Any]
+    config: Dict[str, Any]
+    details: Dict[str, Any]
+
+
+@dataclasses.dataclass
+class GuardrailBatchMessage(BaseMessage):
+    batch: List[GuardrailBatchItemMessage]
+    supports_batching: bool = True
+
+    def as_payload_dict(self) -> Dict[str, Any]:
+        data = super().as_payload_dict()
+        data.pop("supports_batching")
+        return data
+
+
+@dataclasses.dataclass
+class CreateAttachmentMessage(BaseMessage):
+    file_path: str
+    file_name: str
+    mime_type: Optional[str]
+    entity_type: AttachmentEntityType
+    entity_id: str
+    project_name: str
+    encoded_url_override: str

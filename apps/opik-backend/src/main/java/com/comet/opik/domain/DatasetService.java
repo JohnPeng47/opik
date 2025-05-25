@@ -5,9 +5,13 @@ import com.comet.opik.api.Dataset;
 import com.comet.opik.api.DatasetCriteria;
 import com.comet.opik.api.DatasetIdentifier;
 import com.comet.opik.api.DatasetLastExperimentCreated;
+import com.comet.opik.api.DatasetLastOptimizationCreated;
 import com.comet.opik.api.DatasetUpdate;
+import com.comet.opik.api.ExperimentType;
+import com.comet.opik.api.Visibility;
 import com.comet.opik.api.error.EntityAlreadyExistsException;
 import com.comet.opik.api.error.ErrorMessage;
+import com.comet.opik.api.events.DatasetsDeleted;
 import com.comet.opik.api.sorting.SortingField;
 import com.comet.opik.domain.sorting.SortingQueryBuilder;
 import com.comet.opik.infrastructure.BatchOperationsConfig;
@@ -15,6 +19,7 @@ import com.comet.opik.infrastructure.auth.RequestContext;
 import com.comet.opik.utils.AsyncUtils;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
+import com.google.common.eventbus.EventBus;
 import com.google.inject.ImplementedBy;
 import io.opentelemetry.instrumentation.annotations.WithSpan;
 import jakarta.inject.Inject;
@@ -54,6 +59,8 @@ public interface DatasetService {
 
     UUID getOrCreate(String workspaceId, String name, String userName);
 
+    Mono<UUID> getOrCreateDataset(String datasetName);
+
     Optional<Dataset> getById(UUID id, String workspaceId);
 
     void update(UUID id, DatasetUpdate dataset);
@@ -62,11 +69,11 @@ public interface DatasetService {
 
     String findWorkspaceIdByDatasetId(UUID id);
 
-    Dataset findById(UUID id, String workspaceId);
+    Dataset findById(UUID id, String workspaceId, Visibility visibility);
 
     List<Dataset> findByIds(Set<UUID> ids, String workspaceId);
 
-    Dataset findByName(String workspaceId, String name);
+    Dataset findByName(String workspaceId, String name, Visibility visibility);
 
     void delete(DatasetIdentifier identifier);
 
@@ -77,6 +84,8 @@ public interface DatasetService {
     DatasetPage find(int page, int size, DatasetCriteria criteria, List<SortingField> sortingFields);
 
     Mono<Void> recordExperiments(Set<DatasetLastExperimentCreated> datasetsLastExperimentCreated);
+
+    Mono<Void> recordOptimizations(Set<DatasetLastOptimizationCreated> datasetsLastOptimizationCreated);
 
     BiInformationResponse getDatasetBIInformation();
 
@@ -100,6 +109,8 @@ class DatasetServiceImpl implements DatasetService {
     private final @NonNull ExperimentDAO experimentDAO;
     private final @NonNull SortingQueryBuilder sortingQueryBuilder;
     private final @NonNull @Config BatchOperationsConfig batchOperationsConfig;
+    private final @NonNull OptimizationDAO optimizationDAO;
+    private final @NonNull EventBus eventBus;
 
     @Override
     public Dataset save(@NonNull Dataset dataset) {
@@ -151,6 +162,7 @@ class DatasetServiceImpl implements DatasetService {
                                 Dataset.builder()
                                         .id(id)
                                         .name(name)
+                                        .visibility(Visibility.PRIVATE)
                                         .createdBy(userName)
                                         .lastUpdatedBy(userName)
                                         .build(),
@@ -164,6 +176,19 @@ class DatasetServiceImpl implements DatasetService {
         UUID id = dataset.get().id();
         log.info("Got dataset with id '{}', name '{}', workspaceId '{}'", id, name, workspaceId);
         return id;
+    }
+
+    @Override
+    public Mono<UUID> getOrCreateDataset(String datasetName) {
+        return Mono.deferContextual(ctx -> {
+            String userName = ctx.get(RequestContext.USER_NAME);
+            String workspaceId = ctx.get(RequestContext.WORKSPACE_ID);
+
+            return Mono.fromCallable(() -> getOrCreate(workspaceId, datasetName, userName))
+                    .subscribeOn(Schedulers.boundedElastic());
+        })
+                .onErrorResume(throwable -> handleDatasetCreationError(throwable, datasetName)
+                        .map(Dataset::id));
     }
 
     @Override
@@ -207,8 +232,10 @@ class DatasetServiceImpl implements DatasetService {
     @Override
     public Dataset findById(@NonNull UUID id) {
         String workspaceId = requestContext.get().getWorkspaceId();
+        Visibility visibility = requestContext.get().getVisibility();
 
-        return enrichDatasetWithAdditionalInformation(List.of(findById(id, workspaceId))).get(0);
+        return enrichDatasetWithAdditionalInformation(List.of(findById(id, workspaceId, visibility)))
+                .get(0);
     }
 
     @Override
@@ -223,14 +250,16 @@ class DatasetServiceImpl implements DatasetService {
     }
 
     @Override
-    public Dataset findById(@NonNull UUID id, @NonNull String workspaceId) {
+    public Dataset findById(@NonNull UUID id, @NonNull String workspaceId, Visibility visibility) {
         log.info("Finding dataset with id '{}', workspaceId '{}'", id, workspaceId);
-        return template.inTransaction(READ_ONLY, handle -> {
+        Dataset dataset = template.inTransaction(READ_ONLY, handle -> {
             var dao = handle.attach(DatasetDAO.class);
-            var dataset = dao.findById(id, workspaceId).orElseThrow(this::newNotFoundException);
+            var d = dao.findById(id, workspaceId).orElseThrow(this::newNotFoundException);
             log.info("Found dataset with id '{}', workspaceId '{}'", id, workspaceId);
-            return dataset;
+            return d;
         });
+
+        return verifyVisibility(dataset, visibility);
     }
 
     @Override
@@ -249,15 +278,17 @@ class DatasetServiceImpl implements DatasetService {
     }
 
     @Override
-    public Dataset findByName(@NonNull String workspaceId, @NonNull String name) {
-        return template.inTransaction(READ_ONLY, handle -> {
+    public Dataset findByName(@NonNull String workspaceId, @NonNull String name, Visibility visibility) {
+        Dataset dataset = template.inTransaction(READ_ONLY, handle -> {
             var dao = handle.attach(DatasetDAO.class);
 
-            Dataset dataset = dao.findByName(workspaceId, name).orElseThrow(this::newNotFoundException);
+            Dataset d = dao.findByName(workspaceId, name).orElseThrow(this::newNotFoundException);
 
-            log.info("Found dataset with name '{}', id '{}', workspaceId '{}'", name, dataset.id(), workspaceId);
-            return dataset;
+            log.info("Found dataset with name '{}', id '{}', workspaceId '{}'", name, d.id(), workspaceId);
+            return d;
         });
+
+        return verifyVisibility(dataset, visibility);
     }
 
     /**
@@ -269,11 +300,18 @@ class DatasetServiceImpl implements DatasetService {
     public void delete(@NonNull DatasetIdentifier identifier) {
         String workspaceId = requestContext.get().getWorkspaceId();
 
+        Dataset dataset = findByName(workspaceId, identifier.datasetName(), Visibility.PRIVATE);
+
         template.inTransaction(WRITE, handle -> {
             var dao = handle.attach(DatasetDAO.class);
             dao.delete(workspaceId, identifier.datasetName());
             return null;
         });
+
+        eventBus.post(new DatasetsDeleted(
+                Set.of(dataset.id()),
+                workspaceId,
+                requestContext.get().getUserName()));
     }
 
     private NotFoundException newNotFoundException() {
@@ -297,6 +335,11 @@ class DatasetServiceImpl implements DatasetService {
             dao.delete(id, workspaceId);
             return null;
         });
+
+        eventBus.post(new DatasetsDeleted(
+                Set.of(id),
+                workspaceId,
+                requestContext.get().getUserName()));
     }
 
     @Override
@@ -312,21 +355,29 @@ class DatasetServiceImpl implements DatasetService {
             handle.attach(DatasetDAO.class).delete(ids, workspaceId);
             return null;
         });
+
+        eventBus.post(new DatasetsDeleted(
+                ids,
+                workspaceId,
+                requestContext.get().getUserName()));
     }
 
     @Override
     public DatasetPage find(int page, int size, @NonNull DatasetCriteria criteria, List<SortingField> sortingFields) {
         String workspaceId = requestContext.get().getWorkspaceId();
         String userName = requestContext.get().getUserName();
+        Visibility visibility = requestContext.get().getVisibility();
 
         String sortingFieldsSql = sortingQueryBuilder.toOrderBySql(sortingFields);
 
+        // withExperimentsOnly refers to Regular experiments only
         if (criteria.withExperimentsOnly() || criteria.promptId() != null) {
 
             Mono<Set<UUID>> datasetIds = experimentDAO.findAllDatasetIds(criteria)
                     .contextWrite(ctx -> AsyncUtils.setRequestContext(ctx, userName, workspaceId))
                     .map(dto -> dto.stream()
-                            .map(ExperimentDatasetId::datasetId)
+                            .filter(datasetEventInfoHolder -> datasetEventInfoHolder.type() == ExperimentType.REGULAR)
+                            .map(DatasetEventInfoHolder::datasetId)
                             .collect(toSet()));
 
             DatasetPage datasetPage = datasetIds.flatMap(ids -> {
@@ -337,9 +388,10 @@ class DatasetServiceImpl implements DatasetService {
                     return Mono.just(DatasetPage.empty(page));
                 } else {
                     if (ids.size() <= maxExperimentInClauseSize) {
-                        return fetchUsingMemory(page, size, criteria, ids, workspaceId, sortingFieldsSql);
+                        return fetchUsingMemory(page, size, criteria, ids, workspaceId, sortingFieldsSql, visibility);
                     } else {
-                        return fetchUsingTempTable(page, size, criteria, ids, workspaceId, sortingFieldsSql);
+                        return fetchUsingTempTable(page, size, criteria, ids, workspaceId, sortingFieldsSql,
+                                visibility);
                     }
                 }
             }).subscribeOn(Schedulers.boundedElastic()).block();
@@ -358,18 +410,20 @@ class DatasetServiceImpl implements DatasetService {
             var repository = handle.attach(DatasetDAO.class);
             int offset = (page - 1) * size;
 
-            long count = repository.findCount(workspaceId, criteria.name(), criteria.withExperimentsOnly());
+            long count = repository.findCount(workspaceId, criteria.name(), criteria.withExperimentsOnly(),
+                    criteria.withOptimizationsOnly(), visibility);
 
             List<Dataset> datasets = enrichDatasetWithAdditionalInformation(
                     repository.find(size, offset, workspaceId, criteria.name(), criteria.withExperimentsOnly(),
-                            sortingFieldsSql));
+                            criteria.withOptimizationsOnly(),
+                            sortingFieldsSql, visibility));
 
             return new DatasetPage(datasets, page, datasets.size(), count);
         });
     }
 
     private Mono<DatasetPage> fetchUsingTempTable(int page, int size, DatasetCriteria criteria, Set<UUID> ids,
-            String workspaceId, String sortingFields) {
+            String workspaceId, String sortingFields, Visibility visibility) {
 
         String tableName = idGenerator.generateId().toString().replace("-", "_");
         int maxExperimentInClauseSize = batchOperationsConfig.getDatasets().getMaxExperimentInClauseSize();
@@ -393,10 +447,10 @@ class DatasetServiceImpl implements DatasetService {
 
             return template.inTransaction(READ_ONLY, handle -> {
                 var repository = handle.attach(DatasetDAO.class);
-                long count = repository.findCountByTempTable(workspaceId, tableName, criteria.name());
+                long count = repository.findCountByTempTable(workspaceId, tableName, criteria.name(), visibility);
                 int offset = (page - 1) * size;
                 List<Dataset> datasets = repository.findByTempTable(workspaceId, tableName, criteria.name(), size,
-                        offset, sortingFields);
+                        offset, sortingFields, visibility);
                 return new DatasetPage(datasets, page, datasets.size(), count);
             });
         }).doFinally(signalType -> {
@@ -409,13 +463,13 @@ class DatasetServiceImpl implements DatasetService {
     }
 
     private Mono<DatasetPage> fetchUsingMemory(int page, int size, DatasetCriteria criteria, Set<UUID> ids,
-            String workspaceId, String sortingFields) {
+            String workspaceId, String sortingFields, Visibility visibility) {
         return Mono.fromCallable(() -> template.inTransaction(READ_ONLY, handle -> {
             var repository = handle.attach(DatasetDAO.class);
-            long count = repository.findCountByIds(workspaceId, ids, criteria.name());
+            long count = repository.findCountByIds(workspaceId, ids, criteria.name(), visibility);
             int offset = (page - 1) * size;
             List<Dataset> datasets = repository.findByIds(workspaceId, ids, criteria.name(), size, offset,
-                    sortingFields);
+                    sortingFields, visibility);
             return new DatasetPage(datasets, page, datasets.size(), count);
         }));
     }
@@ -495,16 +549,26 @@ class DatasetServiceImpl implements DatasetService {
                 .toStream()
                 .collect(toMap(DatasetItemSummary::datasetId, Function.identity()));
 
+        Map<UUID, OptimizationDAO.OptimizationSummary> optimizationSummaryMap = optimizationDAO
+                .findOptimizationSummaryByDatasetIds(ids)
+                .contextWrite(ctx -> AsyncUtils.setRequestContext(ctx, requestContext))
+                .toStream()
+                .collect(toMap(OptimizationDAO.OptimizationSummary::datasetId, Function.identity()));
+
         return datasets.stream()
                 .map(dataset -> {
                     var resume = experimentSummary.computeIfAbsent(dataset.id(), ExperimentSummary::empty);
                     var datasetItemSummary = datasetItemSummaryMap.computeIfAbsent(dataset.id(),
                             DatasetItemSummary::empty);
+                    var optimizationSummary = optimizationSummaryMap.computeIfAbsent(dataset.id(),
+                            OptimizationDAO.OptimizationSummary::empty);
 
                     return dataset.toBuilder()
                             .experimentCount(resume.experimentCount())
                             .datasetItemsCount(datasetItemSummary.datasetItemsCount())
+                            .optimizationCount(optimizationSummary.optimizationCount())
                             .mostRecentExperimentAt(resume.mostRecentExperimentAt())
+                            .mostRecentOptimizationAt(optimizationSummary.mostRecentOptimizationAt())
                             .build();
                 })
                 .toList();
@@ -535,6 +599,29 @@ class DatasetServiceImpl implements DatasetService {
 
     @Override
     @WithSpan
+    public Mono<Void> recordOptimizations(Set<DatasetLastOptimizationCreated> datasetsLastOptimizationCreated) {
+        Preconditions.checkArgument(CollectionUtils.isNotEmpty(datasetsLastOptimizationCreated),
+                "Argument 'datasetsLastOptimizationCreated' must not be empty");
+
+        return Mono.deferContextual(ctx -> {
+            String workspaceId = ctx.get(RequestContext.WORKSPACE_ID);
+
+            return Mono.fromRunnable(() -> template.inTransaction(WRITE, handle -> {
+
+                var dao = handle.attach(DatasetDAO.class);
+
+                int[] results = dao.recordOptimizations(workspaceId, datasetsLastOptimizationCreated);
+
+                log.info("Updated '{}' datasets with last optimization created time", results.length);
+
+                return Mono.empty();
+            }));
+        }).subscribeOn(Schedulers.boundedElastic())
+                .then();
+    }
+
+    @Override
+    @WithSpan
     public long getDailyCreatedCount() {
         return template.inTransaction(READ_ONLY, handle -> {
             var dao = handle.attach(DatasetDAO.class);
@@ -545,4 +632,25 @@ class DatasetServiceImpl implements DatasetService {
         });
     }
 
+    private Dataset verifyVisibility(@NonNull Dataset dataset, Visibility visibility) {
+        boolean publicOnly = Optional.ofNullable(visibility)
+                .map(v -> v == Visibility.PUBLIC)
+                .orElse(false);
+
+        return Optional.of(dataset)
+                .filter(d -> !publicOnly || d.visibility() == Visibility.PUBLIC)
+                .orElseThrow(this::newNotFoundException);
+    }
+
+    private Mono<Dataset> handleDatasetCreationError(Throwable throwable, String datasetName) {
+        if (throwable instanceof EntityAlreadyExistsException) {
+            return Mono.deferContextual(ctx -> {
+                String workspaceId = ctx.get(RequestContext.WORKSPACE_ID);
+
+                return Mono.fromCallable(() -> findByName(workspaceId, datasetName, Visibility.PRIVATE))
+                        .subscribeOn(Schedulers.boundedElastic());
+            });
+        }
+        return Mono.error(throwable);
+    }
 }

@@ -2,7 +2,7 @@ import atexit
 import datetime
 import functools
 import logging
-from typing import Any, Dict, List, Optional, TypeVar, Union
+from typing import Any, Dict, List, Optional, TypeVar, Union, Literal
 
 import httpx
 
@@ -16,7 +16,7 @@ from .. import (
     rest_client_configurator,
     url_helpers,
 )
-from ..message_processing import messages, streamer_constructors
+from ..message_processing import messages, streamer_constructors, message_queue
 from ..message_processing.batching import sequence_splitter
 from ..rest_api import client as rest_api_client
 from ..rest_api.core.api_error import ApiError
@@ -26,12 +26,15 @@ from . import (
     constants,
     dataset,
     experiment,
+    optimization,
     helpers,
     opik_query_language,
     span,
     trace,
     validation_helpers,
 )
+from .attachment import converters as attachment_converters
+from .attachment import Attachment
 from . import rest_stream_parser
 from .dataset import rest_operations as dataset_rest_operations
 from .experiment import helpers as experiment_helpers
@@ -90,11 +93,13 @@ class Opik:
         self._use_batching = _use_batching
 
         self._initialize_streamer(
-            base_url=config_.url_override,
+            url_override=config_.url_override,
             workers=config_.background_workers,
+            file_upload_worker_count=config_.file_upload_background_workers,
             api_key=config_.api_key,
             check_tls_certificate=config_.check_tls_certificate,
             use_batching=_use_batching,
+            enable_json_request_compression=config_.enable_json_request_compression,
         )
         atexit.register(self.end, timeout=self._flush_timeout)
 
@@ -108,29 +113,41 @@ class Opik:
 
     def _initialize_streamer(
         self,
-        base_url: str,
+        url_override: str,
         workers: int,
+        file_upload_worker_count: int,
         api_key: Optional[str],
         check_tls_certificate: bool,
         use_batching: bool,
+        enable_json_request_compression: bool,
     ) -> None:
         httpx_client_ = httpx_client.get(
             workspace=self._workspace,
             api_key=api_key,
             check_tls_certificate=check_tls_certificate,
+            compress_json_requests=enable_json_request_compression,
         )
         self._rest_client = rest_api_client.OpikApi(
-            base_url=base_url,
+            base_url=url_override,
             httpx_client=httpx_client_,
         )
         self._rest_client._client_wrapper._timeout = (
             httpx.USE_CLIENT_DEFAULT
         )  # See https://github.com/fern-api/fern/issues/5321
         rest_client_configurator.configure(self._rest_client)
+
+        max_queue_size = message_queue.calculate_max_queue_size(
+            maximal_queue_size=self._config.maximal_queue_size,
+            batch_factor=self._config.maximal_queue_size_batch_factor,
+        )
+
         self._streamer = streamer_constructors.construct_online_streamer(
             n_consumers=workers,
             rest_client=self._rest_client,
+            httpx_client=httpx_client_,
             use_batching=use_batching,
+            file_upload_worker_count=file_upload_worker_count,
+            max_queue_size=max_queue_size,
         )
 
     def _display_trace_url(self, trace_id: str, project_name: str) -> None:
@@ -176,13 +193,14 @@ class Opik:
         project_name: Optional[str] = None,
         error_info: Optional[ErrorInfoDict] = None,
         thread_id: Optional[str] = None,
+        attachments: Optional[List[Attachment]] = None,
         **ignored_kwargs: Any,
     ) -> trace.Trace:
         """
         Create and log a new trace.
 
         Args:
-            id: The unique identifier for the trace, if not provided a new ID will be generated. Must be a valid [UUIDv7](https://uuid7.com/) ID.
+            id: The unique identifier for the trace, if not provided, a new ID will be generated. Must be a valid [UUIDv7](https://uuid7.com/) ID.
             name: The name of the trace.
             start_time: The start time of the trace. If not provided, the current local time will be used.
             end_time: The end time of the trace.
@@ -196,6 +214,7 @@ class Opik:
             error_info: The dictionary with error information (typically used when the trace function has failed).
             thread_id: Used to group multiple traces into a thread.
                 The identifier is user-defined and has to be unique per project.
+            attachments: The list of attachments to be uploaded to the trace.
 
         Returns:
             trace.Trace: The created trace object.
@@ -230,10 +249,23 @@ class Opik:
 
             self.log_traces_feedback_scores(feedback_scores, project_name)
 
+        if attachments is not None:
+            for attachment_data in attachments:
+                self._streamer.put(
+                    attachment_converters.attachment_to_message(
+                        attachment_data=attachment_data,
+                        entity_type="trace",
+                        entity_id=id,
+                        project_name=project_name,
+                        url_override=self._config.url_override,
+                    )
+                )
+
         return trace.Trace(
             id=id,
             message_streamer=self._streamer,
             project_name=project_name,
+            url_override=self._config.url_override,
         )
 
     def copy_traces(
@@ -323,6 +355,7 @@ class Opik:
         provider: Optional[Union[str, LLMProvider]] = None,
         error_info: Optional[ErrorInfoDict] = None,
         total_cost: Optional[float] = None,
+        attachments: Optional[List[Attachment]] = None,
     ) -> span.Span:
         """
         Create and log a new span.
@@ -340,18 +373,19 @@ class Opik:
             output: The output data for the span. This can be any valid JSON serializable object.
             tags: Tags associated with the span.
             feedback_scores: The list of feedback score dicts associated with the span. Dicts don't require to have an `id` value.
-            project_name: The name of the project. If not set, the project name which was configured when Opik instance
+            project_name: The name of the project. If not set, the project name which was configured when the Opik instance
                 was created will be used.
             usage: Usage data for the span. In order for input, output and total tokens to be visible in the UI,
-                the usage must contain OpenAI-formatted keys (they can be passed additionaly to original usage on the top level of the dict):  prompt_tokens, completion_tokens and total_tokens.
+                the usage must contain OpenAI-formatted keys (they can be passed additionally to the original usage on the top level of the dict): prompt_tokens, completion_tokens and total_tokens.
                 If OpenAI-formatted keys were not found, Opik will try to calculate them automatically if the usage
                 format is recognized (you can see which provider's formats are recognized in opik.LLMProvider enum), but it is not guaranteed.
             model: The name of LLM (in this case `type` parameter should be == `llm`)
             provider: The provider of LLM. You can find providers officially supported by Opik for cost tracking
-                in `opik.LLMProvider` enum. If your provider is not here, please open an issue in our github - https://github.com/comet-ml/opik.
-                If your provider not in the list, you can still specify it but the cost tracking will not be available
+                in `opik.LLMProvider` enum. If your provider is not here, please open an issue in our GitHub - https://github.com/comet-ml/opik.
+                If your provider is not in the list, you can still specify it, but the cost tracking will not be available
             error_info: The dictionary with error information (typically used when the span function has failed).
             total_cost: The cost of the span in USD. This value takes priority over the cost calculated by Opik from the usage.
+            attachments: The list of attachments to be uploaded to the span.
 
         Returns:
             span.Span: The created span object.
@@ -418,6 +452,18 @@ class Opik:
                 feedback_score["id"] = id
 
             self.log_spans_feedback_scores(feedback_scores, project_name)
+
+        if attachments is not None:
+            for attachment_data in attachments:
+                self._streamer.put(
+                    attachment_converters.attachment_to_message(
+                        attachment_data=attachment_data,
+                        entity_type="span",
+                        entity_id=id,
+                        project_name=project_name,
+                        url_override=self._config.url_override,
+                    )
+                )
 
         return span.Span(
             id=id,
@@ -681,6 +727,8 @@ class Opik:
         experiment_config: Optional[Dict[str, Any]] = None,
         prompt: Optional[Prompt] = None,
         prompts: Optional[List[Prompt]] = None,
+        type: Literal["regular", "trial", "mini-batch"] = "regular",
+        optimization_id: Optional[str] = None,
     ) -> experiment.Experiment:
         """
         Creates a new experiment using the given dataset name and optional parameters.
@@ -691,6 +739,9 @@ class Opik:
             experiment_config: Optional experiment configuration parameters. Must be a dictionary if provided.
             prompt: Prompt object to associate with the experiment. Deprecated, use `prompts` argument instead.
             prompts: List of Prompt objects to associate with the experiment.
+            type: The type of the experiment. Can be "regular", "trial", or "mini-batch".
+                Defaults to "regular". "trial" and "mini-batch" are only relevant for prompt optimization experiments.
+            optimization_id: Optional ID of the optimization associated with the experiment.
 
         Returns:
             experiment.Experiment: The newly created experiment object.
@@ -713,6 +764,8 @@ class Opik:
             id=id,
             metadata=metadata,
             prompt_versions=prompt_versions,
+            type=type,
+            optimization_id=optimization_id,
         )
 
         experiment_ = experiment.Experiment(
@@ -818,7 +871,7 @@ class Opik:
         timeout = timeout if timeout is not None else self._flush_timeout
         self._streamer.close(timeout)
 
-    def flush(self, timeout: Optional[int] = None) -> None:
+    def flush(self, timeout: Optional[int] = None) -> bool:
         """
         Flush the streamer to ensure all messages are sent.
 
@@ -826,10 +879,10 @@ class Opik:
             timeout (Optional[int]): The timeout for flushing the streamer. Once the timeout is reached, the flush method will return regardless of whether all messages have been sent.
 
         Returns:
-            None
+            True if all messages have been sent within specified timeout, False otherwise.
         """
         timeout = timeout if timeout is not None else self._flush_timeout
-        self._streamer.flush(timeout)
+        return self._streamer.flush(timeout)
 
     def search_traces(
         self,
@@ -848,28 +901,37 @@ class Opik:
             truncate: Whether to truncate image data stored in input, output or metadata
         """
 
-        page_size = 100
         traces: List[trace_public.TracePublic] = []
 
-        filters = opik_query_language.OpikQueryLanguage(filter_string).parsed_filters
+        filter_expressions = opik_query_language.OpikQueryLanguage(
+            filter_string
+        ).get_filter_expressions()
+        filters_ = helpers.parse_search_span_expressions(filter_expressions)
 
-        page = 1
+        # this is the constant for maximum objects sent from backend side
+        max_endpoint_batch_size = 2_000
+
         while len(traces) < max_results:
-            page_traces = self._rest_client.traces.get_traces_by_project(
+            spans_amount_left = max_results - len(traces)
+            current_batch_size = min(spans_amount_left, max_endpoint_batch_size)
+
+            traces_stream = self._rest_client.traces.search_traces(
                 project_name=project_name or self._project_name,
-                filters=filters,
-                page=page,
-                size=page_size,
+                filters=filters_,
+                limit=current_batch_size,
                 truncate=truncate,
+                last_retrieved_id=traces[-1].id if len(traces) > 0 else None,
             )
 
-            if len(page_traces.content) == 0:
+            new_traces = rest_stream_parser.read_and_parse_stream(
+                stream=traces_stream, item_class=trace_public.TracePublic
+            )
+            traces.extend(new_traces)
+
+            if current_batch_size > len(new_traces):
                 break
 
-            traces.extend(page_traces.content)
-            page += 1
-
-        return traces[:max_results]
+        return traces
 
     def search_spans(
         self,
@@ -916,10 +978,10 @@ class Opik:
             new_spans = rest_stream_parser.read_and_parse_stream(
                 stream=spans_stream, item_class=span_public.SpanPublic
             )
-            if len(new_spans) == 0:
-                break
-
             spans.extend(new_spans)
+
+            if current_batch_size > len(new_spans):
+                break
 
         return spans
 
@@ -948,7 +1010,7 @@ class Opik:
         Fetches a project by its unique identifier.
 
         Parameters:
-            id (str): project if (uuid).
+            id (str): project id (uuid).
 
         Returns:
             project_public.ProjectPublic: pydantic model object with all the data associated with the project found.
@@ -1039,6 +1101,36 @@ class Opik:
         """
         prompt_client = PromptClient(self._rest_client)
         return prompt_client.get_all_prompts(name=name)
+
+    def create_optimization(
+        self,
+        dataset_name: str,
+        objective_name: str,
+        name: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> optimization.Optimization:
+        id = id_helpers.generate_id()
+
+        self._rest_client.optimizations.create_optimization(
+            id=id,
+            name=name,
+            dataset_name=dataset_name,
+            objective_name=objective_name,
+            status="running",
+            metadata=metadata,
+        )
+
+        optimization_client = optimization.Optimization(
+            id=id, rest_client=self._rest_client
+        )
+        return optimization_client
+
+    def delete_optimizations(self, ids: List[str]) -> None:
+        self._rest_client.optimizations.delete_optimizations_by_id(ids=ids)
+
+    def get_optimization_by_id(self, id: str) -> optimization.Optimization:
+        _ = self._rest_client.optimizations.get_optimization_by_id(id)
+        return optimization.Optimization(id=id, rest_client=self._rest_client)
 
 
 @functools.lru_cache()

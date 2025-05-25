@@ -1,6 +1,6 @@
 package com.comet.opik.infrastructure.auth;
 
-import com.comet.opik.api.ProjectVisibility;
+import com.comet.opik.api.Visibility;
 import com.comet.opik.infrastructure.usagelimit.Quota;
 import com.google.inject.servlet.RequestScoped;
 import jakarta.ws.rs.core.MultivaluedMap;
@@ -22,6 +22,8 @@ public class RequestContext {
     public static final String LIMIT = "Opik-%s-Limit";
     public static final String REMAINING_LIMIT = "Opik-%s-Remaining-Limit";
     public static final String LIMIT_REMAINING_TTL = "Opik-%s-Remaining-Limit-TTL-Millis";
+    public static final String VISIBILITY = "visibility";
+    public static final String RATE_LIMIT_RESET = "RateLimit-Reset";
 
     public static final String PROJECT_NAME = "projectName";
 
@@ -31,5 +33,5 @@ public class RequestContext {
     private String apiKey;
     private MultivaluedMap<String, String> headers;
     private List<Quota> quotas;
-    private ProjectVisibility visibility;
+    private Visibility visibility;
 }

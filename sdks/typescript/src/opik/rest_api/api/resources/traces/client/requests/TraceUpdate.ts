@@ -13,9 +13,10 @@ export interface TraceUpdate {
     projectName?: string;
     /** If null and project_name not specified, Default Project is assumed */
     projectId?: string;
+    name?: string;
     endTime?: Date;
-    input?: OpikApi.JsonNode;
-    output?: OpikApi.JsonNode;
+    input?: OpikApi.JsonListString;
+    output?: OpikApi.JsonListString;
     metadata?: OpikApi.JsonNode;
     tags?: string[];
     errorInfo?: OpikApi.ErrorInfo;

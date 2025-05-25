@@ -13,9 +13,10 @@ import com.comet.opik.api.DatasetItemsDelete;
 import com.comet.opik.api.DatasetUpdate;
 import com.comet.opik.api.ExperimentItem;
 import com.comet.opik.api.PageColumns;
+import com.comet.opik.api.Visibility;
 import com.comet.opik.api.filter.ExperimentsComparisonFilter;
 import com.comet.opik.api.filter.FiltersFactory;
-import com.comet.opik.api.resources.v1.priv.validate.IdParamsValidator;
+import com.comet.opik.api.resources.v1.priv.validate.ParamsValidator;
 import com.comet.opik.api.sorting.SortingFactoryDatasets;
 import com.comet.opik.api.sorting.SortingField;
 import com.comet.opik.domain.DatasetItemService;
@@ -114,6 +115,7 @@ public class DatasetsResource {
             @QueryParam("page") @Min(1) @DefaultValue("1") int page,
             @QueryParam("size") @Min(1) @DefaultValue("10") int size,
             @QueryParam("with_experiments_only") boolean withExperimentsOnly,
+            @QueryParam("with_optimizations_only") boolean withOptimizationsOnly,
             @QueryParam("prompt_id") UUID promptId,
             @QueryParam("name") String name,
             @QueryParam("sorting") String sorting) {
@@ -122,6 +124,7 @@ public class DatasetsResource {
                 .name(name)
                 .withExperimentsOnly(withExperimentsOnly)
                 .promptId(promptId)
+                .withOptimizationsOnly(withOptimizationsOnly)
                 .build();
 
         String workspaceId = requestContext.get().getWorkspaceId();
@@ -232,10 +235,11 @@ public class DatasetsResource {
             @RequestBody(content = @Content(schema = @Schema(implementation = DatasetIdentifier.class))) @NotNull @Valid DatasetIdentifier identifier) {
 
         String workspaceId = requestContext.get().getWorkspaceId();
+        Visibility visibility = requestContext.get().getVisibility();
         String name = identifier.datasetName();
 
         log.info("Finding dataset by name '{}' on workspace_id '{}'", name, workspaceId);
-        Dataset dataset = service.findByName(workspaceId, name);
+        Dataset dataset = service.findByName(workspaceId, name, visibility);
         log.info("Found dataset by name '{}', id '{}' on workspace_id '{}'", name, dataset.id(), workspaceId);
 
         return Response.ok(dataset).build();
@@ -257,6 +261,7 @@ public class DatasetsResource {
         DatasetItem datasetItem = itemService.get(itemId)
                 .contextWrite(ctx -> setRequestContext(ctx, requestContext))
                 .block();
+
         log.info("Found dataset item by id '{}' on workspace_id '{}'", itemId, workspaceId);
 
         return Response.ok(datasetItem).build();
@@ -299,8 +304,10 @@ public class DatasetsResource {
             @RequestBody(content = @Content(schema = @Schema(implementation = DatasetItemStreamRequest.class))) @NotNull @Valid DatasetItemStreamRequest request) {
         var workspaceId = requestContext.get().getWorkspaceId();
         var userName = requestContext.get().getUserName();
+        var visibility = requestContext.get().getVisibility();
+
         log.info("Streaming dataset items by '{}' on workspaceId '{}'", request, workspaceId);
-        var items = itemService.getItems(workspaceId, request)
+        var items = itemService.getItems(workspaceId, request, visibility)
                 .contextWrite(ctx -> ctx.put(RequestContext.USER_NAME, userName)
                         .put(RequestContext.WORKSPACE_ID, workspaceId));
         var outputStream = streamer.getOutputStream(items);
@@ -373,7 +380,7 @@ public class DatasetsResource {
             @QueryParam("filters") String filters,
             @QueryParam("truncate") @Schema(description = "Truncate image included in either input, output or metadata") boolean truncate) {
 
-        var experimentIds = IdParamsValidator.getIds(experimentIdsQueryParam);
+        var experimentIds = ParamsValidator.getIds(experimentIdsQueryParam);
 
         var queryFilters = filtersFactory.newFilters(filters, ExperimentsComparisonFilter.LIST_TYPE_REFERENCE);
 
@@ -411,7 +418,7 @@ public class DatasetsResource {
 
         var experimentIds = Optional.ofNullable(experimentIdsQueryParam)
                 .filter(Predicate.not(String::isEmpty))
-                .map(IdParamsValidator::getIds)
+                .map(ParamsValidator::getIds)
                 .orElse(null);
 
         String workspaceId = requestContext.get().getWorkspaceId();

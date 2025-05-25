@@ -1,106 +1,85 @@
 import opik
 from typing import Literal, List, Dict, Any
 from .. import utils
+from datasets import load_dataset
+import traceback
+from importlib.resources import files
+import json
+import warnings
+from ..datasets import (
+    hotpot_300,
+    hotpot_500,
+    halu_eval_300,
+    tiny_test,
+    gsm8k,
+    ai2_arc,
+    truthful_qa,
+    cnn_dailymail,
+    ragbench_sentence_relevance,
+    election_questions,
+    medhallu,
+    rag_hallucinations,
+)
 
-def get_or_create_dataset(name: Literal["hotpot-300", "halu-eval-300", "tiny-test"]) -> opik.Dataset:
-    if name == "hotpot-300":
-        return utils.get_or_create_dataset(
-            dataset_name=name,
-            description="HotpotQA dataset with 300 examples",
-            data_loader=_load_hotpot_300
-        )
-    elif name == "halu-eval-300":
-        return utils.get_or_create_dataset(
-            dataset_name=name,
-            description="HaluEval dataset with 300 examples",
-            data_loader=_load_halu_eval_300   
-        )
-    elif name == "tiny-test":
-        return utils.get_or_create_dataset(
-            dataset_name=name,
-            description="Tiny test dataset with 5 examples",
-            data_loader=_load_tiny_test
-        )
-    
-    raise ValueError(f"Unknown example dataset name: {name}")
+class HaltError(Exception):
+    """Exception raised when we need to halt the process due to a critical error."""
 
-
-def _load_hotpot_300() -> List[Dict[str, Any]]:
-    from dspy.datasets import HotPotQA
-
-    seed = 42
-    size = 300
-
-    trainset = [
-        x.with_inputs("question")
-        for x in HotPotQA(train_seed=seed, train_size=size).train
-    ]
-
-    data = []
-    for row in trainset:
-        d = row.toDict()
-        del d["dspy_uuid"]
-        del d["dspy_split"]
-        data.append(d)
-    
-    return data
+    pass
 
 
-def _load_halu_eval_300() -> List[Dict[str, Any]]:
-    import pandas as pd
-
-    df = pd.read_parquet(
-        "hf://datasets/pminervini/HaluEval/general/data-00000-of-00001.parquet"
+def get_or_create_dataset(
+    name: Literal[
+        "hotpot-300",
+        "hotpot-500",
+        "halu-eval-300",
+        "tiny-test",
+        "gsm8k",
+        "hotpot_qa",
+        "ai2_arc",
+        "truthful_qa",
+        "cnn_dailymail",
+        "ragbench_sentence_relevance",
+        "election_questions",
+        "medhallu",
+        "rag_hallucinations",
+    ],
+    test_mode: bool = False,
+    seed: int = 42,
+) -> opik.Dataset:
+    """Get or create a dataset from HuggingFace, using the provided seed for sampling."""
+    warnings.warn(
+        "This function is deprecated. Please use the datasets directly from opik_optimizer.datasets module instead."
+        " For example: opik_optimizer.datasets.truthful_qa() or opik_optimizer.datasets.rag_hallucination()",
+        DeprecationWarning,
+        stacklevel=2
     )
-    df = df.sample(n=300, random_state=42)
+    if name == "hotpot-300":
+        dataset = hotpot_300(test_mode)
+    elif name == "hotpot-500":
+        dataset = hotpot_500(test_mode)
+    elif name == "halu-eval-300":
+        dataset = halu_eval_300(test_mode)
+    elif name == "tiny-test":
+        dataset = tiny_test()
+    elif name == "gsm8k":
+        dataset = gsm8k(test_mode)
+    elif name == "hotpot_qa":
+        raise HaltError("HotpotQA dataset is no longer available in the demo datasets.")
+    elif name == "ai2_arc":
+        dataset = ai2_arc(test_mode)
+    elif name == "truthful_qa":
+        dataset = truthful_qa(test_mode)
+    elif name == "cnn_dailymail":
+        dataset = cnn_dailymail(test_mode)
+    elif name == "ragbench_sentence_relevance":
+        dataset = ragbench_sentence_relevance(test_mode)
+    elif name == "election_questions":
+        dataset = election_questions(test_mode)
+    elif name == "medhallu":
+        dataset = medhallu(test_mode)
+    elif name == "rag_hallucinations":
+        dataset = rag_hallucinations(test_mode)
+    else:
+        raise HaltError(f"Unknown dataset: {name}")
 
-    dataset_records = [
-        {
-            "input": x["user_query"],
-            "llm_output": x["chatgpt_response"],
-            "expected_hallucination_label": x["hallucination"],
-        }
-        for x in df.to_dict(orient="records")
-    ]
-
-    return dataset_records
-
-
-def _load_tiny_test() -> List[Dict[str, Any]]:
-    return [
-        {
-            "text": "What is the capital of France?",
-            "label": "Paris",
-            "metadata": {
-                "context": "France is a country in Europe. Its capital is Paris."
-            }
-        },
-        {
-            "text": "Who wrote Romeo and Juliet?",
-            "label": "William Shakespeare",
-            "metadata": {
-                "context": "Romeo and Juliet is a famous play written by William Shakespeare."
-            }
-        },
-        {
-            "text": "What is 2 + 2?",
-            "label": "4",
-            "metadata": {
-                "context": "Basic arithmetic: 2 + 2 equals 4."
-            }
-        },
-        {
-            "text": "What is the largest planet in our solar system?",
-            "label": "Jupiter",
-            "metadata": {
-                "context": "Jupiter is the largest planet in our solar system."
-            }
-        },
-        {
-            "text": "Who painted the Mona Lisa?",
-            "label": "Leonardo da Vinci",
-            "metadata": {
-                "context": "The Mona Lisa was painted by Leonardo da Vinci."
-            }
-        }
-    ] 
+    return dataset

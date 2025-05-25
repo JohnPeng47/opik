@@ -24,6 +24,8 @@ import useTracesOrSpansScoresColumns from "@/hooks/useTracesOrSpansScoresColumns
 import {
   COLUMN_COMMENTS_ID,
   COLUMN_FEEDBACK_SCORES_ID,
+  COLUMN_GUARDRAIL_STATISTIC_ID,
+  COLUMN_GUARDRAILS_ID,
   COLUMN_ID_ID,
   COLUMN_METADATA_ID,
   COLUMN_SELECT_ID,
@@ -200,6 +202,8 @@ const COLUMNS_ORDER_KEY = "traces-columns-order";
 const COLUMNS_SORT_KEY_SUFFIX = "-columns-sort";
 const COLUMNS_SCORES_ORDER_KEY = "traces-scores-columns-order";
 const DYNAMIC_COLUMNS_KEY = "traces-dynamic-columns";
+const PAGINATION_SIZE_KEY = "traces-pagination-size";
+const ROW_HEIGHT_KEY = "traces-row-height";
 
 type TracesSpansTabProps = {
   type: TRACE_DATA_TYPE;
@@ -232,21 +236,29 @@ export const TracesSpansTab: React.FC<TracesSpansTabProps> = ({
     updateType: "replaceIn",
   });
 
-  const [size = 100, setSize] = useQueryParam("size", NumberParam, {
-    updateType: "replaceIn",
+  const [size, setSize] = useQueryParamAndLocalStorageState<
+    number | null | undefined
+  >({
+    localStorageKey: PAGINATION_SIZE_KEY,
+    queryKey: "size",
+    defaultValue: 100,
+    queryParamConfig: NumberParam,
+    syncQueryWithLocalStorageOnInit: true,
   });
 
   const [, setLastSection] = useQueryParam("lastSection", LastSectionParam, {
     updateType: "replaceIn",
   });
 
-  const [height = ROW_HEIGHT.small, setHeight] = useQueryParam(
-    "height",
-    StringParam,
-    {
-      updateType: "replaceIn",
-    },
-  );
+  const [height, setHeight] = useQueryParamAndLocalStorageState<
+    string | null | undefined
+  >({
+    localStorageKey: ROW_HEIGHT_KEY,
+    queryKey: "height",
+    defaultValue: ROW_HEIGHT.small,
+    queryParamConfig: StringParam,
+    syncQueryWithLocalStorageOnInit: true,
+  });
 
   const [filters = [], setFilters] = useQueryParam(
     `${type}_filters`,
@@ -506,12 +518,14 @@ export const TracesSpansTab: React.FC<TracesSpansTabProps> = ({
       ...(isGuardrailsEnabled
         ? [
             {
-              id: "guardrails",
+              id: COLUMN_GUARDRAILS_ID,
               label: "Guardrails",
-              type: COLUMN_TYPE.string,
+              statisticKey: COLUMN_GUARDRAIL_STATISTIC_ID,
+              type: COLUMN_TYPE.guardrails,
               accessorFn: (row: BaseTraceData) =>
-                row.guardrail_validations || [],
+                row.guardrails_validations || [],
               cell: GuardrailsCell as never,
+              statisticDataFormater: (value: number) => `${value} failed`,
             },
           ]
         : []),
@@ -540,8 +554,17 @@ export const TracesSpansTab: React.FC<TracesSpansTabProps> = ({
         label: "Feedback scores",
         type: COLUMN_TYPE.numberDictionary,
       },
+      ...(isGuardrailsEnabled
+        ? [
+            {
+              id: COLUMN_GUARDRAILS_ID,
+              label: "Guardrails",
+              type: COLUMN_TYPE.guardrails,
+            },
+          ]
+        : []),
     ];
-  }, [type]);
+  }, [type, isGuardrailsEnabled]);
 
   const columns = useMemo(() => {
     return [

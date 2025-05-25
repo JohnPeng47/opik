@@ -30,13 +30,13 @@ class LiteLLMChatModel(base_model.OpikBaseModel):
         Args:
             model_name: The name of the LLM to be used.
                 This parameter will be passed to `litellm.completion(model=model_name)` so you don't need to pass
-                the `model` argument separately inside **completion_kwargs.
+                the `model` argument separately inside completion_kwargs.
             must_support_arguments: A list of openai-like arguments that the given model + provider pair must support.
                 `litellm.get_supported_openai_params(model_name)` call is used to get
                 supported arguments. If any is missing, ValueError is raised.
                 You can pass the arguments from the table: https://docs.litellm.ai/docs/completion/input#translated-openai-params
 
-            **completion_kwargs: key-value arguments to always pass additionally into `litellm.completion` function.
+            completion_kwargs: key-value arguments to always pass additionally into `litellm.completion` function.
         """
 
         super().__init__(model_name=model_name)
@@ -153,6 +153,7 @@ class LiteLLMChatModel(base_model.OpikBaseModel):
 
     def generate_provider_response(
         self,
+        messages: List[Dict[str, Any]],
         **kwargs: Any,
     ) -> "ModelResponse":
         """
@@ -161,6 +162,8 @@ class LiteLLMChatModel(base_model.OpikBaseModel):
         You can find all possible input parameters here: https://docs.litellm.ai/docs/completion/input
 
         Args:
+            messages: A list of messages to be sent to the model, should be a list of dictionaries with the keys
+                "content" and "role".
             kwargs: arguments required by the provider to generate a response.
 
         Returns:
@@ -168,8 +171,6 @@ class LiteLLMChatModel(base_model.OpikBaseModel):
         """
 
         # we need to pop messages first, and after we will check the rest params
-        messages = kwargs.pop("messages")
-
         valid_litellm_params = self._remove_unnecessary_not_supported_params(kwargs)
         all_kwargs = {**self._completion_kwargs, **valid_litellm_params}
 
@@ -212,21 +213,22 @@ class LiteLLMChatModel(base_model.OpikBaseModel):
         )
         return response.choices[0].message.content
 
-    async def agenerate_provider_response(self, **kwargs: Any) -> "ModelResponse":
+    async def agenerate_provider_response(
+        self, messages: List[Dict[str, Any]], **kwargs: Any
+    ) -> "ModelResponse":
         """
         Generate a provider-specific response. Can be used to interface with
         the underlying model provider (e.g., OpenAI, Anthropic) and get raw output. Async version.
         You can find all possible input parameters here: https://docs.litellm.ai/docs/completion/input
 
         Args:
+            messages: A list of messages to be sent to the model, should be a list of dictionaries with the keys
+                "content" and "role".
             kwargs: arguments required by the provider to generate a response.
 
         Returns:
             Any: The response from the model provider, which can be of any type depending on the use case and LLM.
         """
-
-        # we need to pop messages first, and after we will check the rest params
-        messages = kwargs.pop("messages")
 
         valid_litellm_params = self._remove_unnecessary_not_supported_params(kwargs)
         all_kwargs = {**self._completion_kwargs, **valid_litellm_params}

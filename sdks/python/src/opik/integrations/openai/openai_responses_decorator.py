@@ -12,7 +12,7 @@ from typing_extensions import override
 
 import openai
 
-from opik import dict_utils, llm_usage
+from opik import LLMProvider, dict_utils, llm_usage
 from opik.api_objects import span
 from opik.decorator import arguments_helpers, base_track_decorator
 from openai.types import responses as openai_responses
@@ -37,7 +37,7 @@ RESPONSE_KEYS_TO_LOG_AS_OUTPUT = [
 class OpenaiResponsesTrackDecorator(base_track_decorator.BaseTrackDecorator):
     """
     An implementation of BaseTrackDecorator designed specifically for tracking
-    calls of OpenAI's `responses.create` functions.
+    calls of OpenAI's `responses.create` and `responses.parse` functions.
     """
 
     def __init__(self) -> None:
@@ -54,7 +54,7 @@ class OpenaiResponsesTrackDecorator(base_track_decorator.BaseTrackDecorator):
     ) -> arguments_helpers.StartSpanParameters:
         assert (
             kwargs is not None
-        ), "Expected kwargs to be not None in responses.create(**kwargs)"
+        ), "Expected kwargs to be not None in responses.create(**kwargs) or responses.parse(**kwargs)"
 
         name = track_options.name if track_options.name is not None else func.__name__
 
@@ -102,9 +102,9 @@ class OpenaiResponsesTrackDecorator(base_track_decorator.BaseTrackDecorator):
         )
 
         opik_usage = None
-        if "usage" in result_dict:
+        if result_dict.get("usage") is not None:
             opik_usage = llm_usage.try_build_opik_usage_or_log_error(
-                provider="_openai_responses",
+                provider=LLMProvider.OPENAI,
                 usage=result_dict["usage"],
                 logger=LOGGER,
                 error_message="Failed to log token usage from openai responses call",

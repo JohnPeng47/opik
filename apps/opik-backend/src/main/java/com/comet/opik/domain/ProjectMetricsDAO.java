@@ -36,6 +36,7 @@ import static com.comet.opik.utils.AsyncUtils.makeMonoContextAware;
 public interface ProjectMetricsDAO {
     String NAME_TRACES = "traces";
     String NAME_COST = "cost";
+    String NAME_GUARDRAILS_FAILED_COUNT = "failed";
     String NAME_DURATION_P50 = "duration.p50";
     String NAME_DURATION_P90 = "duration.p90";
     String NAME_DURATION_P99 = "duration.p99";
@@ -49,12 +50,14 @@ public interface ProjectMetricsDAO {
     Mono<List<Entry>> getFeedbackScores(@NonNull UUID projectId, @NonNull ProjectMetricRequest request);
     Mono<List<Entry>> getTokenUsage(@NonNull UUID projectId, @NonNull ProjectMetricRequest request);
     Mono<List<Entry>> getCost(@NonNull UUID projectId, @NonNull ProjectMetricRequest request);
+    Mono<List<Entry>> getGuardrailsFailedCount(@NonNull UUID projectId, @NonNull ProjectMetricRequest request);
 }
 
 @Slf4j
 @Singleton
 @RequiredArgsConstructor(onConstructor_ = @Inject)
 class ProjectMetricsDAOImpl implements ProjectMetricsDAO {
+
     private final @NonNull TransactionTemplateAsync template;
 
     private static final Map<TimeInterval, String> INTERVAL_TO_SQL = Map.of(
@@ -71,13 +74,11 @@ class ProjectMetricsDAOImpl implements ProjectMetricsDAO {
                                 AND notEquals(start_time, toDateTime64('1970-01-01 00:00:00.000', 9)),
                             (dateDiff('microsecond', start_time, end_time) / 1000.0),
                             NULL) AS duration
-                FROM traces
+                FROM traces final
                 WHERE project_id = :project_id
                 AND workspace_id = :workspace_id
                 AND start_time >= parseDateTime64BestEffort(:start_time, 9)
                 AND start_time \\<= parseDateTime64BestEffort(:end_time, 9)
-                ORDER BY (workspace_id, project_id, id) DESC, last_updated_at DESC
-                LIMIT 1 BY id
             )
             SELECT <bucket> AS bucket,
                    arrayMap(v -> toDecimal64(if(isNaN(v), 0, v), 9), quantiles(0.5, 0.9, 0.99)(duration)) AS duration
@@ -95,9 +96,9 @@ class ProjectMetricsDAOImpl implements ProjectMetricsDAO {
                    nullIf(count(DISTINCT id), 0) as count
             FROM traces
             WHERE project_id = :project_id
-                AND workspace_id = :workspace_id
-                AND start_time >= parseDateTime64BestEffort(:start_time, 9)
-                AND start_time \\<= parseDateTime64BestEffort(:end_time, 9)
+            AND workspace_id = :workspace_id
+            AND start_time >= parseDateTime64BestEffort(:start_time, 9)
+            AND start_time \\<= parseDateTime64BestEffort(:end_time, 9)
             GROUP BY bucket
             ORDER BY bucket
             WITH FILL
@@ -111,20 +112,25 @@ class ProjectMetricsDAOImpl implements ProjectMetricsDAO {
                 SELECT t.start_time,
                         fs.name,
                         fs.value
-                FROM feedback_scores fs
-                    JOIN traces t ON t.id = fs.entity_id
-                WHERE project_id = :project_id
+                FROM feedback_scores fs final
+                JOIN (
+                    SELECT
+                        id,
+                        start_time
+                    FROM traces final
+                    WHERE project_id = :project_id
                     AND workspace_id = :workspace_id
-                    AND entity_type = 'trace'
-                ORDER BY (workspace_id, project_id, entity_type, entity_id, name) DESC, last_updated_at DESC
-                LIMIT 1 BY entity_id, name
+                    AND start_time >= parseDateTime64BestEffort(:start_time, 9)
+                    AND start_time \\<= parseDateTime64BestEffort(:end_time, 9)
+                ) t ON t.id = fs.entity_id
+                WHERE project_id = :project_id
+                AND workspace_id = :workspace_id
+                AND entity_type = 'trace'
             )
             SELECT <bucket> AS bucket,
                     name,
                     nullIf(avg(value), 0) AS value
             FROM feedback_scores_deduplication
-            WHERE start_time >= parseDateTime64BestEffort(:start_time, 9)
-                AND start_time \\<= parseDateTime64BestEffort(:end_time, 9)
             GROUP BY name, bucket
             ORDER BY name, bucket
             WITH FILL
@@ -138,20 +144,30 @@ class ProjectMetricsDAOImpl implements ProjectMetricsDAO {
                 SELECT t.start_time as start_time,
                        name,
                        value
-                FROM spans
-                    JOIN traces t ON spans.trace_id = t.id
-                    ARRAY JOIN mapKeys(usage) AS name, mapValues(usage) AS value
-                WHERE project_id = :project_id
+                FROM (
+                    SELECT
+                        start_time,
+                        id
+                    FROM traces final
+                    WHERE project_id = :project_id
                     AND workspace_id = :workspace_id
-                ORDER BY (workspace_id, project_id, trace_id, parent_span_id, id) DESC, last_updated_at DESC
-                LIMIT 1 BY id, name
+                    AND start_time >= parseDateTime64BestEffort(:start_time, 9)
+                    AND start_time \\<= parseDateTime64BestEffort(:end_time, 9)
+                ) t
+                JOIN (
+                    SELECT
+                        trace_id,
+                        usage
+                    FROM spans final
+                    WHERE project_id = :project_id
+                    AND workspace_id = :workspace_id
+                ) s ON s.trace_id = t.id
+                ARRAY JOIN mapKeys(usage) AS name, mapValues(usage) AS value
             )
             SELECT <bucket> AS bucket,
                     name,
                     nullIf(sum(value), 0) AS value
             FROM spans_dedup
-            WHERE start_time >= parseDateTime64BestEffort(:start_time, 9)
-                AND start_time \\<= parseDateTime64BestEffort(:end_time, 9)
             GROUP BY name, bucket
             ORDER BY name, bucket
             WITH FILL
@@ -164,18 +180,56 @@ class ProjectMetricsDAOImpl implements ProjectMetricsDAO {
             WITH spans_dedup AS (
                 SELECT t.start_time AS start_time,
                        s.total_estimated_cost AS value
-                FROM spans s
-                    JOIN traces t ON spans.trace_id = t.id
-                WHERE project_id = :project_id
+                FROM (
+                    SELECT
+                        start_time,
+                        id
+                    FROM traces final
+                    WHERE project_id = :project_id
                     AND workspace_id = :workspace_id
-                ORDER BY (workspace_id, project_id, trace_id, parent_span_id, id) DESC, last_updated_at DESC
-                LIMIT 1 BY s.id
+                    AND start_time >= parseDateTime64BestEffort(:start_time, 9)
+                    AND start_time \\<= parseDateTime64BestEffort(:end_time, 9)
+                ) t
+                JOIN (
+                    SELECT
+                        trace_id,
+                        total_estimated_cost
+                    FROM spans final
+                    WHERE project_id = :project_id
+                    AND workspace_id = :workspace_id
+                ) s ON s.trace_id = t.id
             )
             SELECT <bucket> AS bucket,
                     nullIf(sum(value), 0) AS value
             FROM spans_dedup
-            WHERE start_time >= parseDateTime64BestEffort(:start_time, 9)
+            GROUP BY bucket
+            ORDER BY bucket
+            WITH FILL
+                FROM <fill_from>
+                TO parseDateTimeBestEffort(:end_time)
+                STEP <step>;
+            """;
+
+    private static final String GET_GUARDRAILS_FAILED_COUNT = """
+            WITH traces_dedup AS (
+                SELECT
+                       id,
+                       start_time,
+                       if(end_time IS NOT NULL AND start_time IS NOT NULL
+                                AND notEquals(start_time, toDateTime64('1970-01-01 00:00:00.000', 9)),
+                            (dateDiff('microsecond', start_time, end_time) / 1000.0),
+                            NULL) AS duration
+                FROM traces final
+                WHERE project_id = :project_id
+                AND workspace_id = :workspace_id
+                AND start_time >= parseDateTime64BestEffort(:start_time, 9)
                 AND start_time \\<= parseDateTime64BestEffort(:end_time, 9)
+            )
+            SELECT <bucket> AS bucket,
+                   nullIf(count(DISTINCT g.id), 0) AS failed_cnt
+            FROM traces_dedup AS t
+                JOIN guardrails AS g ON g.entity_id = t.id
+            WHERE g.result = 'failed'
             GROUP BY bucket
             ORDER BY bucket
             WITH FILL
@@ -261,6 +315,16 @@ class ProjectMetricsDAOImpl implements ProjectMetricsDAO {
                 .collectList());
     }
 
+    @Override
+    public Mono<List<Entry>> getGuardrailsFailedCount(@NonNull UUID projectId, @NonNull ProjectMetricRequest request) {
+        return template.nonTransaction(connection -> getMetric(projectId, request, connection,
+                GET_GUARDRAILS_FAILED_COUNT, "guardrailsFailedCount")
+                .flatMapMany(result -> rowToDataPoint(result,
+                        row -> NAME_GUARDRAILS_FAILED_COUNT,
+                        row -> row.get("failed_cnt", Integer.class)))
+                .collectList());
+    }
+
     private Mono<? extends Result> getMetric(
             UUID projectId, ProjectMetricRequest request, Connection connection, String query, String segmentName) {
         var template = new ST(query)
@@ -270,6 +334,7 @@ class ProjectMetricsDAOImpl implements ProjectMetricsDAO {
                 .add("fill_from", wrapWeekly(request.interval(),
                         "toStartOfInterval(parseDateTimeBestEffort(:start_time), %s)"
                                 .formatted(intervalToSql(request.interval()))));
+
         var statement = connection.createStatement(template.render())
                 .bind("project_id", projectId)
                 .bind("start_time", request.intervalStart().toString())

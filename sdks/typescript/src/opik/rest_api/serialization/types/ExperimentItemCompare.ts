@@ -5,7 +5,7 @@
 import * as serializers from "../index";
 import * as OpikApi from "../../api/index";
 import * as core from "../../core";
-import { JsonNodeCompare } from "./JsonNodeCompare";
+import { JsonListStringCompare } from "./JsonListStringCompare";
 import { FeedbackScoreCompare } from "./FeedbackScoreCompare";
 import { CommentCompare } from "./CommentCompare";
 
@@ -17,13 +17,16 @@ export const ExperimentItemCompare: core.serialization.ObjectSchema<
     experimentId: core.serialization.property("experiment_id", core.serialization.string()),
     datasetItemId: core.serialization.property("dataset_item_id", core.serialization.string()),
     traceId: core.serialization.property("trace_id", core.serialization.string()),
-    input: JsonNodeCompare.optional(),
-    output: JsonNodeCompare.optional(),
+    input: JsonListStringCompare.optional(),
+    output: JsonListStringCompare.optional(),
     feedbackScores: core.serialization.property(
         "feedback_scores",
         core.serialization.list(FeedbackScoreCompare).optional(),
     ),
     comments: core.serialization.list(CommentCompare).optional(),
+    totalEstimatedCost: core.serialization.property("total_estimated_cost", core.serialization.number().optional()),
+    duration: core.serialization.number().optional(),
+    usage: core.serialization.record(core.serialization.string(), core.serialization.number()).optional(),
     createdAt: core.serialization.property("created_at", core.serialization.date().optional()),
     lastUpdatedAt: core.serialization.property("last_updated_at", core.serialization.date().optional()),
     createdBy: core.serialization.property("created_by", core.serialization.string().optional()),
@@ -36,10 +39,13 @@ export declare namespace ExperimentItemCompare {
         experiment_id: string;
         dataset_item_id: string;
         trace_id: string;
-        input?: JsonNodeCompare.Raw | null;
-        output?: JsonNodeCompare.Raw | null;
+        input?: JsonListStringCompare.Raw | null;
+        output?: JsonListStringCompare.Raw | null;
         feedback_scores?: FeedbackScoreCompare.Raw[] | null;
         comments?: CommentCompare.Raw[] | null;
+        total_estimated_cost?: number | null;
+        duration?: number | null;
+        usage?: Record<string, number> | null;
         created_at?: string | null;
         last_updated_at?: string | null;
         created_by?: string | null;

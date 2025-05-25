@@ -10,7 +10,7 @@ import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.type.CollectionType;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import dev.ai4j.openai4j.chat.Message;
+import dev.langchain4j.model.openai.internal.chat.Message;
 import lombok.NonNull;
 import lombok.experimental.UtilityClass;
 import lombok.extern.slf4j.Slf4j;
@@ -21,6 +21,7 @@ import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.math.BigDecimal;
 import java.util.Collection;
+import java.util.Optional;
 
 @UtilityClass
 @Slf4j
@@ -50,6 +51,17 @@ public class JsonUtils {
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+    }
+
+    public static String getStringOrDefault(JsonNode jsonNode) {
+        return Optional.ofNullable(jsonNode).map(JsonNode::toString).orElse("");
+    }
+
+    public static JsonNode getJsonNodeOrDefault(String str) {
+        return Optional.ofNullable(str)
+                .filter(s -> !s.isBlank())
+                .map(JsonUtils::getJsonNodeFromString)
+                .orElse(null);
     }
 
     public JsonNode readTree(@NonNull Object content) {

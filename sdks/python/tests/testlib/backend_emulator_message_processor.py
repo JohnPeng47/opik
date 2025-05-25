@@ -1,6 +1,8 @@
 from opik.message_processing import message_processors, messages
 from typing import List, Tuple, Type, Dict, Union, Optional
 
+from opik.rest_api.types import span_write, trace_write
+from opik.types import ErrorInfoDict
 from .models import TraceModel, SpanModel, FeedbackScoreModel
 from opik import dict_utils
 import collections
@@ -16,7 +18,7 @@ class BackendEmulatorMessageProcessor(message_processors.BaseMessageProcessor):
 
     The real message processor uses data from messages passed to `process` method to send
     data to the backend. Emulator does not send any requests, it accumulates the
-    data that came from messages in it's attributes.
+    data that came from messages in its attributes.
 
     Moreover, it doesn't just store the raw data. You can access full trace or span trees
     that were built with received messages. Those trees are specified via the model classes
@@ -50,7 +52,7 @@ class BackendEmulatorMessageProcessor(message_processors.BaseMessageProcessor):
     @property
     def trace_trees(self):
         """
-        Builds list of trace trees based on the data from the processed messages.
+        Builds a list of trace trees based on the data from the processed messages.
         Before processing traces, builds span_trees
         """
         self.span_trees  # call to connect all spans
@@ -75,8 +77,8 @@ class BackendEmulatorMessageProcessor(message_processors.BaseMessageProcessor):
     @property
     def span_trees(self):
         """
-        Builds list of span trees based on the data from the processed messages.
-        Children spans are sorted by creation time
+        Builds a list of span trees based on the data from the processed messages.
+        Children's spans are sorted by creation time
         """
         for span_id, parent_span_id in self._span_to_parent_span.items():
             if parent_span_id is None:
@@ -114,6 +116,28 @@ class BackendEmulatorMessageProcessor(message_processors.BaseMessageProcessor):
             self._trace_trees.append(trace)
             self._observations[message.trace_id] = trace
 
+        elif isinstance(message, trace_write.TraceWrite):
+            trace = TraceModel(
+                id=message.id,
+                name=message.name,
+                input=message.input,
+                output=message.output,
+                tags=message.tags,
+                metadata=message.metadata,
+                start_time=message.start_time,
+                end_time=message.end_time,
+                project_name=message.project_name,
+                thread_id=message.thread_id,
+            )
+
+            self._trace_trees.append(trace)
+            self._observations[message.id] = trace
+
+            if message.error_info is not None:
+                trace.error_info = ErrorInfoDict(
+                    **message.error_info.dict(by_alias=True)
+                )
+
         elif isinstance(message, messages.CreateSpanMessage):
             span = SpanModel(
                 id=message.span_id,
@@ -140,6 +164,37 @@ class BackendEmulatorMessageProcessor(message_processors.BaseMessageProcessor):
             self._span_to_trace[span.id] = message.trace_id
 
             self._observations[message.span_id] = span
+
+        elif isinstance(message, span_write.SpanWrite):
+            span = SpanModel(
+                id=message.id,
+                name=message.name,
+                input=message.input,
+                output=message.output,
+                tags=message.tags,
+                metadata=message.metadata,
+                type=message.type,
+                start_time=message.start_time,
+                end_time=message.end_time,
+                usage=message.usage,
+                project_name=message.project_name,
+                model=message.model,
+                provider=message.provider,
+                total_cost=message.total_estimated_cost,
+            )
+
+            if message.error_info is not None:
+                span.error_info = ErrorInfoDict(
+                    **message.error_info.dict(by_alias=True)
+                )
+
+            self._span_to_parent_span[span.id] = message.parent_span_id
+            if message.parent_span_id is None:
+                self._span_trees.append(span)
+
+            self._span_to_trace[span.id] = message.trace_id
+
+            self._observations[message.id] = span
         elif isinstance(message, messages.CreateSpansBatchMessage):
             for item in message.batch:
                 self.process(item)
@@ -204,7 +259,10 @@ class BackendEmulatorMessageProcessor(message_processors.BaseMessageProcessor):
 
         self.processed_messages.append(message)
 
-    def process(self, message: messages.BaseMessage) -> None:
+    def process(
+        self,
+        message: messages.BaseMessage,
+    ) -> None:
         try:
             self._dispatch_message(message)
         except Exception as exception:

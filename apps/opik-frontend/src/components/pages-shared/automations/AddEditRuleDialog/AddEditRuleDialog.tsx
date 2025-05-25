@@ -189,10 +189,7 @@ const AddEditRuleDialog: React.FC<AddEditRuleDialogProps> = ({
                 control={form.control}
                 name="ruleName"
                 render={({ field, formState }) => {
-                  const validationErrors = get(formState.errors, [
-                    "llmJudgeDetails",
-                    "model",
-                  ]);
+                  const validationErrors = get(formState.errors, ["ruleName"]);
                   return (
                     <FormItem>
                       <Label>Name</Label>
@@ -288,7 +285,7 @@ const AddEditRuleDialog: React.FC<AddEditRuleDialogProps> = ({
                                 Code metric
                               </ToggleGroupItem>
                             ) : (
-                              <TooltipWrapper content="This feature is coming soon, stay tuned !">
+                              <TooltipWrapper content="This feature is not available for this environment">
                                 <span>
                                   <ToggleGroupItem
                                     value={EVALUATORS_RULE_TYPE.python_code}

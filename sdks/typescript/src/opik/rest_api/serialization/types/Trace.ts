@@ -5,6 +5,7 @@
 import * as serializers from "../index";
 import * as OpikApi from "../../api/index";
 import * as core from "../../core";
+import { JsonListString } from "./JsonListString";
 import { JsonNode } from "./JsonNode";
 import { ErrorInfo } from "./ErrorInfo";
 import { FeedbackScore } from "./FeedbackScore";
@@ -15,11 +16,11 @@ export const Trace: core.serialization.ObjectSchema<serializers.Trace.Raw, OpikA
     id: core.serialization.string().optional(),
     projectName: core.serialization.property("project_name", core.serialization.string().optional()),
     projectId: core.serialization.property("project_id", core.serialization.string().optional()),
-    name: core.serialization.string(),
+    name: core.serialization.string().optional(),
     startTime: core.serialization.property("start_time", core.serialization.date()),
     endTime: core.serialization.property("end_time", core.serialization.date().optional()),
-    input: JsonNode.optional(),
-    output: JsonNode.optional(),
+    input: JsonListString.optional(),
+    output: JsonListString.optional(),
     metadata: JsonNode.optional(),
     tags: core.serialization.list(core.serialization.string()).optional(),
     errorInfo: core.serialization.property("error_info", ErrorInfo.optional()),
@@ -45,11 +46,11 @@ export declare namespace Trace {
         id?: string | null;
         project_name?: string | null;
         project_id?: string | null;
-        name: string;
+        name?: string | null;
         start_time: string;
         end_time?: string | null;
-        input?: JsonNode.Raw | null;
-        output?: JsonNode.Raw | null;
+        input?: JsonListString.Raw | null;
+        output?: JsonListString.Raw | null;
         metadata?: JsonNode.Raw | null;
         tags?: string[] | null;
         error_info?: ErrorInfo.Raw | null;

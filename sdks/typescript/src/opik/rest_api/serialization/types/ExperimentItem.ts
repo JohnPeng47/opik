@@ -5,7 +5,7 @@
 import * as serializers from "../index";
 import * as OpikApi from "../../api/index";
 import * as core from "../../core";
-import { JsonNode } from "./JsonNode";
+import { JsonListString } from "./JsonListString";
 import { FeedbackScore } from "./FeedbackScore";
 import { Comment } from "./Comment";
 
@@ -15,13 +15,16 @@ export const ExperimentItem: core.serialization.ObjectSchema<serializers.Experim
         experimentId: core.serialization.property("experiment_id", core.serialization.string()),
         datasetItemId: core.serialization.property("dataset_item_id", core.serialization.string()),
         traceId: core.serialization.property("trace_id", core.serialization.string()),
-        input: JsonNode.optional(),
-        output: JsonNode.optional(),
+        input: JsonListString.optional(),
+        output: JsonListString.optional(),
         feedbackScores: core.serialization.property(
             "feedback_scores",
             core.serialization.list(FeedbackScore).optional(),
         ),
         comments: core.serialization.list(Comment).optional(),
+        totalEstimatedCost: core.serialization.property("total_estimated_cost", core.serialization.number().optional()),
+        duration: core.serialization.number().optional(),
+        usage: core.serialization.record(core.serialization.string(), core.serialization.number()).optional(),
         createdAt: core.serialization.property("created_at", core.serialization.date().optional()),
         lastUpdatedAt: core.serialization.property("last_updated_at", core.serialization.date().optional()),
         createdBy: core.serialization.property("created_by", core.serialization.string().optional()),
@@ -34,10 +37,13 @@ export declare namespace ExperimentItem {
         experiment_id: string;
         dataset_item_id: string;
         trace_id: string;
-        input?: JsonNode.Raw | null;
-        output?: JsonNode.Raw | null;
+        input?: JsonListString.Raw | null;
+        output?: JsonListString.Raw | null;
         feedback_scores?: FeedbackScore.Raw[] | null;
         comments?: Comment.Raw[] | null;
+        total_estimated_cost?: number | null;
+        duration?: number | null;
+        usage?: Record<string, number> | null;
         created_at?: string | null;
         last_updated_at?: string | null;
         created_by?: string | null;

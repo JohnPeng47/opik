@@ -104,11 +104,11 @@ class FeedbackScoreServiceImpl implements FeedbackScoreService {
         return projectService.retrieveByNamesOrCreate(scoresPerProject.keySet())
                 .map(ProjectService::groupByName)
                 .map(projectMap -> mergeProjectsAndScores(projectMap, scoresPerProject))
-                .flatMap(projects -> processScoreBatch(entityType, projects, scores.size())) // score all scores
+                .flatMap(projects -> saveScoreBatch(entityType, projects)) // score all scores
                 .then();
     }
 
-    private Mono<Long> processScoreBatch(EntityType entityType, List<ProjectDto> projects, int actualBatchSize) {
+    private Mono<Long> saveScoreBatch(EntityType entityType, List<ProjectDto> projects) {
         return Flux.fromIterable(projects)
                 .flatMap(projectDto -> dao.scoreBatchOf(entityType, projectDto.scores()))
                 .reduce(0L, Long::sum);
@@ -142,6 +142,8 @@ class FeedbackScoreServiceImpl implements FeedbackScoreService {
 
     @Override
     public Mono<FeedbackScoreNames> getTraceFeedbackScoreNames(@NonNull UUID projectId) {
+        // Will throw an error in case we try to get private project with public visibility
+        projectService.get(projectId);
         return dao.getTraceFeedbackScoreNames(projectId)
                 .map(names -> names.stream().map(FeedbackScoreNames.ScoreName::new).toList())
                 .map(FeedbackScoreNames::new);
@@ -149,6 +151,8 @@ class FeedbackScoreServiceImpl implements FeedbackScoreService {
 
     @Override
     public Mono<FeedbackScoreNames> getSpanFeedbackScoreNames(@NonNull UUID projectId, SpanType type) {
+        // Will throw an error in case we try to get private project with public visibility
+        projectService.get(projectId);
         return dao.getSpanFeedbackScoreNames(projectId, type)
                 .map(names -> names.stream().map(FeedbackScoreNames.ScoreName::new).toList())
                 .map(FeedbackScoreNames::new);

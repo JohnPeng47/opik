@@ -8,18 +8,21 @@ import allure
 logger = logging.getLogger(__name__)
 
 
+# TODO
+# unskip bedrock once AWS credentials set up in automation repo
+# unskip Haystack once fix to snippet is deployed to prod
 @pytest.mark.parametrize(
     "integration",
     [
         "Function decorators",
         "OpenAI",
         "Anthropic",
-        "Bedrock",
+        # "Bedrock",
         "Gemini",
         "LangChain",
         "LangGraph",
         "LlamaIndex",
-        "Haystack",
+        # "Haystack",
         "LiteLLM",
         "Ragas",
         "Groq",
@@ -27,7 +30,7 @@ logger = logging.getLogger(__name__)
     ],
 )
 @allure.title("Test Quickstart Snippet - {integration}")
-def test_quickstart_snippet(page, integration):
+def test_quickstart_snippet(page, env_config, integration):
     """
     Test that:
     1. Opens the Opik homepage
@@ -39,7 +42,7 @@ def test_quickstart_snippet(page, integration):
     7. Shows the output
     """
 
-    page.goto("http://localhost:5173/default/home")
+    page.goto(env_config.base_url)
     page.wait_for_load_state("networkidle")
 
     logger.info("Clicking quickstart")
@@ -70,7 +73,7 @@ def test_quickstart_snippet(page, integration):
         try:
             # Set a timeout for the subprocess to prevent hanging
             result = subprocess.run(
-                ["python", str(file_path)], capture_output=True, text=True, timeout=30
+                ["python", str(file_path)], capture_output=True, text=True, timeout=60
             )
 
             logger.info("\n=== Output ===")

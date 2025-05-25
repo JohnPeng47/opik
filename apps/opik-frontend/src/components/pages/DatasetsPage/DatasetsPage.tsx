@@ -39,6 +39,7 @@ export const getRowId = (d: Dataset) => d.id;
 const SELECTED_COLUMNS_KEY = "datasets-selected-columns";
 const COLUMNS_WIDTH_KEY = "datasets-columns-width";
 const COLUMNS_ORDER_KEY = "datasets-columns-order";
+const PAGINATION_SIZE_KEY = "datasets-pagination-size";
 
 export const DEFAULT_COLUMNS: ColumnData<Dataset>[] = [
   {
@@ -62,6 +63,12 @@ export const DEFAULT_COLUMNS: ColumnData<Dataset>[] = [
     label: "Most recent experiment",
     type: COLUMN_TYPE.time,
     accessorFn: (row) => formatDate(row.most_recent_experiment_at),
+  },
+  {
+    id: "most_recent_optimization_at",
+    label: "Most recent optimization",
+    type: COLUMN_TYPE.time,
+    accessorFn: (row) => formatDate(row.most_recent_optimization_at),
   },
   {
     id: "created_at",
@@ -97,7 +104,9 @@ const DatasetsPage: React.FunctionComponent = () => {
 
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
-  const [size, setSize] = useState(10);
+  const [size, setSize] = useLocalStorageState<number>(PAGINATION_SIZE_KEY, {
+    defaultValue: 10,
+  });
 
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 

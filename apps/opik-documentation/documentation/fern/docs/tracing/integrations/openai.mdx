@@ -10,6 +10,7 @@ This guide explains how to integrate Opik with the OpenAI Python SDK. By using t
     You can check out the Colab Notebook if you'd like to jump straight to the code:
   </span>
   <a
+    className="no-external-icon"
     href="https://colab.research.google.com/github/comet-ml/opik/blob/main/apps/opik-documentation/documentation/docs/cookbook/openai.ipynb"
     target="_blank"
     rel="noopener noreferrer"
@@ -96,7 +97,9 @@ completion = azure_client.chat.completions.create(
 
 The `track_openai` wrapper supports the following OpenAI methods:
 
-- `openai_client.chat.completions.create()`
+- `openai_client.chat.completions.create()`, including support for stream=True mode.
 - `openai_client.beta.chat.completions.parse()`
+- `openai_client.beta.chat.completions.stream()`
+- `openai_client.responses.create()`
 
 If you would like to track another OpenAI method, please let us know by opening an issue on [GitHub](https://github.com/comet-ml/opik/issues).

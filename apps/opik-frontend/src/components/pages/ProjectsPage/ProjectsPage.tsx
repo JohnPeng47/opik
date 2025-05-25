@@ -19,6 +19,7 @@ import DurationCell from "@/components/shared/DataTableCells/DurationCell";
 import CostCell from "@/components/shared/DataTableCells/CostCell";
 import ResourceCell from "@/components/shared/DataTableCells/ResourceCell";
 import useProjectWithStatisticsList from "@/hooks/useProjectWithStatisticsList";
+import useQueryParamAndLocalStorageState from "@/hooks/useQueryParamAndLocalStorageState";
 import { ProjectWithStatistic } from "@/types/projects";
 import Loader from "@/components/shared/Loader/Loader";
 import AddEditProjectDialog from "@/components/pages/ProjectsPage/AddEditProjectDialog";
@@ -31,11 +32,11 @@ import SearchInput from "@/components/shared/SearchInput/SearchInput";
 import { formatDate } from "@/lib/date";
 import ColumnsButton from "@/components/shared/ColumnsButton/ColumnsButton";
 import {
+  COLUMN_GUARDRAILS_ID,
   COLUMN_NAME_ID,
   COLUMN_SELECT_ID,
   COLUMN_TYPE,
   ColumnData,
-  CUSTOM_HEADER_ICON,
 } from "@/types/shared";
 import { convertColumnDataToColumn, mapColumnDataFields } from "@/lib/table";
 import useLocalStorageState from "use-local-storage-state";
@@ -55,6 +56,7 @@ const SELECTED_COLUMNS_KEY = "projects-selected-columns";
 const COLUMNS_WIDTH_KEY = "projects-columns-width";
 const COLUMNS_ORDER_KEY = "projects-columns-order";
 const COLUMNS_SORT_KEY = "projects-columns-sort";
+const PAGINATION_SIZE_KEY = "projects-pagination-size";
 
 export const DEFAULT_COLUMN_PINNING: ColumnPinningState = {
   left: [COLUMN_SELECT_ID, COLUMN_NAME_ID],
@@ -169,18 +171,18 @@ const ProjectsPage: React.FunctionComponent = () => {
       ...(isGuardrailsEnabled
         ? [
             {
-              id: "guardrails",
+              id: COLUMN_GUARDRAILS_ID,
               label: "Guardrails",
-              type: COLUMN_TYPE.string,
-              iconType: CUSTOM_HEADER_ICON.GUARDRAILS,
-              /// TODO should be redefined once BE done
+              type: COLUMN_TYPE.guardrails,
               accessorFn: (row: ProjectWithStatistic) =>
-                row.failed_guardrails && isNumber(row.failed_guardrails)
-                  ? `${row.failed_guardrails} failed`
+                row.guardrails_failed_count &&
+                isNumber(row.guardrails_failed_count)
+                  ? `${row.guardrails_failed_count} failed`
                   : "-",
             },
           ]
         : []),
+
       {
         id: "last_updated_at",
         label: "Last updated",
@@ -217,9 +219,17 @@ const ProjectsPage: React.FunctionComponent = () => {
   const [page = 1, setPage] = useQueryParam("page", NumberParam, {
     updateType: "replaceIn",
   });
-  const [size = 10, setSize] = useQueryParam("size", NumberParam, {
-    updateType: "replaceIn",
+
+  const [size, setSize] = useQueryParamAndLocalStorageState<
+    number | null | undefined
+  >({
+    localStorageKey: PAGINATION_SIZE_KEY,
+    queryKey: "size",
+    defaultValue: 10,
+    queryParamConfig: NumberParam,
+    syncQueryWithLocalStorageOnInit: true,
   });
+
   const [rowSelection = {}, setRowSelection] = useQueryParam(
     "selection",
     JsonParam,
