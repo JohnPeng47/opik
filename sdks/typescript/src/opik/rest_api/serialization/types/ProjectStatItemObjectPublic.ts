@@ -28,9 +28,7 @@ export const ProjectStatItemObjectPublic: core.serialization.Schema<
 
 export declare namespace ProjectStatItemObjectPublic {
     export type Raw =
-        | ProjectStatItemObjectPublic.Percentage
-        | ProjectStatItemObjectPublic.Count
-        | ProjectStatItemObjectPublic.Avg;
+        ProjectStatItemObjectPublic.Percentage | ProjectStatItemObjectPublic.Count | ProjectStatItemObjectPublic.Avg;
 
     export interface Percentage extends _Base, PercentageValueStatPublic.Raw {
         type: "PERCENTAGE";
