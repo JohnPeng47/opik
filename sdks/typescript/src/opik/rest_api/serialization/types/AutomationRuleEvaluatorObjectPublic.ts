@@ -35,8 +35,7 @@ export const AutomationRuleEvaluatorObjectPublic: core.serialization.Schema<
 
 export declare namespace AutomationRuleEvaluatorObjectPublic {
     export type Raw =
-        | AutomationRuleEvaluatorObjectPublic.LlmAsJudge
-        | AutomationRuleEvaluatorObjectPublic.UserDefinedMetricPython;
+        AutomationRuleEvaluatorObjectPublic.LlmAsJudge | AutomationRuleEvaluatorObjectPublic.UserDefinedMetricPython;
 
     export interface LlmAsJudge extends _Base, AutomationRuleEvaluatorLlmAsJudgePublic.Raw {
         type: "llm_as_judge";
