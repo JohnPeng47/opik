@@ -5,8 +5,7 @@
 import * as OpikApi from "../index";
 
 export type AutomationRuleEvaluatorUpdate =
-    | OpikApi.AutomationRuleEvaluatorUpdate.LlmAsJudge
-    | OpikApi.AutomationRuleEvaluatorUpdate.UserDefinedMetricPython;
+    OpikApi.AutomationRuleEvaluatorUpdate.LlmAsJudge | OpikApi.AutomationRuleEvaluatorUpdate.UserDefinedMetricPython;
 
 export namespace AutomationRuleEvaluatorUpdate {
     export interface LlmAsJudge extends OpikApi.AutomationRuleEvaluatorUpdateLlmAsJudge, _Base {
@@ -14,8 +13,7 @@ export namespace AutomationRuleEvaluatorUpdate {
     }
 
     export interface UserDefinedMetricPython
-        extends OpikApi.AutomationRuleEvaluatorUpdateUserDefinedMetricPython,
-            _Base {
+        extends OpikApi.AutomationRuleEvaluatorUpdateUserDefinedMetricPython, _Base {
         type: "user_defined_metric_python";
     }
 
