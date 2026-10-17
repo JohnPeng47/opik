@@ -20,10 +20,5 @@ export const ProjectMetricResponsePublicMetricType: core.serialization.Schema<
 
 export declare namespace ProjectMetricResponsePublicMetricType {
     export type Raw =
-        | "FEEDBACK_SCORES"
-        | "TRACE_COUNT"
-        | "TOKEN_USAGE"
-        | "DURATION"
-        | "COST"
-        | "GUARDRAILS_FAILED_COUNT";
+        "FEEDBACK_SCORES" | "TRACE_COUNT" | "TOKEN_USAGE" | "DURATION" | "COST" | "GUARDRAILS_FAILED_COUNT";
 }
